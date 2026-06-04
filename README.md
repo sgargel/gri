@@ -36,7 +36,17 @@ manifest. `gri install owner/repo` and you're done.
 ## Install
 
 ```bash
-sudo cp gri /usr/local/bin/gri
+# system-wide (requires sudo)
+curl -fsSL https://raw.githubusercontent.com/sgargel/gri/main/gri -o /tmp/gri-boot \
+  && chmod +x /tmp/gri-boot \
+  && sudo /tmp/gri-boot install sgargel/gri \
+  && rm /tmp/gri-boot
+
+# current user only, no sudo
+curl -fsSL https://raw.githubusercontent.com/sgargel/gri/main/gri -o /tmp/gri-boot \
+  && chmod +x /tmp/gri-boot \
+  && /tmp/gri-boot --user install sgargel/gri \
+  && rm /tmp/gri-boot
 ```
 
 ## Usage
