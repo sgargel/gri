@@ -116,6 +116,7 @@ pick_asset() {
         fi
         # track non-package assets as fallback for platform-agnostic releases
         [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|dmg|sig|pem|txt|json|html|asc)$ ]] && continue
+        [[ "$n" =~ ^(sha256sums|sha512sums|md5sums|checksums|sha256sum|sha512sum)$ ]] && continue
         (( fallback_count++ ))
         fallback_name=$name
         fallback_url=$url
