@@ -1,0 +1,466 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+OPT_DIR="${GRI_OPT_DIR:-/opt}"
+BIN_DIR="${GRI_BIN_DIR:-/usr/local/bin}"
+GITHUB_API="https://api.github.com"
+DRY_RUN=0
+USER_MODE=0
+
+# ── helpers ──────────────────────────────────────────────────────────────────
+
+die() { printf 'error: %b\n' "$*" >&2; exit 1; }
+
+# run CMD [ARGS...] — execute or print depending on --dry-run
+run() {
+    if (( DRY_RUN )); then
+        echo "[dry-run] $*"
+    else
+        "$@"
+    fi
+}
+
+need() {
+    for cmd in "$@"; do
+        command -v "$cmd" &>/dev/null || die "'$cmd' is required but not installed"
+    done
+}
+
+detect_os() {
+    case "$(uname -s)" in
+        Linux*)          echo "linux"   ;;
+        Darwin*)         echo "darwin"  ;;
+        MINGW*|MSYS*|CYGWIN*) echo "windows" ;;
+        *)               die "unsupported OS: $(uname -s)" ;;
+    esac
+}
+
+detect_arch() {
+    case "$(uname -m)" in
+        x86_64|amd64)    echo "amd64"  ;;
+        aarch64|arm64)   echo "arm64"  ;;
+        armv7*)          echo "arm"    ;;
+        i386|i686)       echo "386"    ;;
+        *)               die "unsupported arch: $(uname -m)" ;;
+    esac
+}
+
+# ── github api ────────────────────────────────────────────────────────────────
+
+fetch_release() {
+    local owner_repo="$1" version="$2"
+    local url
+
+    if [[ "$version" == "latest" ]]; then
+        url="${GITHUB_API}/repos/${owner_repo}/releases/latest"
+    else
+        local v="${version#v}"
+        url="${GITHUB_API}/repos/${owner_repo}/releases/tags/${version}"
+        # try without leading 'v' if first attempt fails
+        curl -sf "$url" 2>/dev/null \
+            || curl -sf "${GITHUB_API}/repos/${owner_repo}/releases/tags/v${v}" \
+            || die "release '${version}' not found for ${owner_repo}"
+        return
+    fi
+
+    curl -sf "$url" || die "could not fetch release for ${owner_repo}"
+}
+
+# ── asset selection ───────────────────────────────────────────────────────────
+
+score_asset() {
+    local name="$1" os="$2" arch="$3"
+    local n score=0
+    n="${name,,}"
+
+    # skip package formats
+    [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe)$ ]] && echo 0 && return
+
+    # OS: must match, otherwise skip
+    case "$os" in
+        linux)
+            [[ "$n" =~ linux ]]          && ((score += 10)) || { echo 0; return; }
+            ;;
+        darwin)
+            [[ "$n" =~ darwin|macos|osx ]] && ((score += 10)) || { echo 0; return; }
+            ;;
+        windows)
+            [[ "$n" =~ windows|win ]]    && ((score += 10)) || { echo 0; return; }
+            ;;
+    esac
+
+    # arch
+    case "$arch" in
+        amd64) [[ "$n" =~ amd64|x86_64|x64 ]] && ((score += 5)) ;;
+        arm64) [[ "$n" =~ arm64|aarch64 ]]     && ((score += 5)) ;;
+    esac
+
+    # prefer archives over raw binaries (archives contain the full release)
+    [[ "$n" =~ \.(tar\.gz|tgz|tar\.bz2|tar\.xz|zip)$ ]] && ((score += 2))
+
+    echo "$score"
+}
+
+pick_asset() {
+    local assets_json="$1" os="$2" arch="$3"
+    local best_score=0 best_name="" best_url=""
+
+    while IFS=$'\t' read -r name url; do
+        local s
+        s=$(score_asset "$name" "$os" "$arch")
+        if (( s > best_score )); then
+            best_score=$s
+            best_name=$name
+            best_url=$url
+        fi
+    done < <(echo "$assets_json" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
+
+    [[ -z "$best_url" ]] && return 1
+    printf '%s\t%s' "$best_name" "$best_url"
+}
+
+# ── checksum ─────────────────────────────────────────────────────────────────
+
+# find_checksum_asset ASSETS_JSON ASSET_NAME
+# prints "<algo>\t<url>" or returns 1 if nothing found
+find_checksum_asset() {
+    local assets_json="$1" asset_name="$2"
+    local an="${asset_name,,}"
+    local result_algo="" result_url=""
+    local fallback_algo="" fallback_url=""
+    local name url n
+
+    while IFS=$'\t' read -r name url; do
+        n="${name,,}"
+        case "$n" in
+            # per-asset sidecar files — strongest match, stop immediately
+            "${an}.sha256"|"${an}.sha2")  result_algo="sha256"; result_url="$url"; break ;;
+            "${an}.sha512")               result_algo="sha512"; result_url="$url"; break ;;
+            "${an}.md5")                  result_algo="md5";    result_url="$url"; break ;;
+            # aggregate: exact well-known names — stop immediately
+            "checksums.txt"|"checksums.sha256"|"checksums.sha512" \
+            |"sha256sums"|"sha256sums.txt")
+                result_algo="sha256"; result_url="$url"; break ;;
+            "sha512sums"|"sha512sums.txt")
+                result_algo="sha512"; result_url="$url"; break ;;
+            # wildcard fallbacks — keep iterating in case an exact match comes later
+            *checksums*|*sha256sum*|*sha256sums*)
+                [[ -z "$fallback_url" ]] && fallback_algo="sha256" && fallback_url="$url" ;;
+            *sha512sum*|*sha512sums*)
+                [[ -z "$fallback_url" ]] && fallback_algo="sha512" && fallback_url="$url" ;;
+        esac
+    done < <(echo "$assets_json" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
+
+    if [[ -n "$result_url" ]]; then
+        printf '%s\t%s' "$result_algo" "$result_url"
+    elif [[ -n "$fallback_url" ]]; then
+        printf '%s\t%s' "$fallback_algo" "$fallback_url"
+    else
+        return 1
+    fi
+}
+
+# verify_checksum FILE ALGO CHECKSUM_FILE ASSET_NAME
+verify_checksum() {
+    local file="$1" algo="$2" ckfile="$3" asset_name="$4"
+    local expected actual
+
+    # extract the hash for our specific asset from the checksum file
+    expected=$(grep -F "$asset_name" "$ckfile" | awk '{print $1}' | head -1)
+    [[ -z "$expected" ]] && { echo "warning: '${asset_name}' not found in checksum file, skipping verification" >&2; return 0; }
+
+    case "$algo" in
+        sha256) actual=$(sha256sum "$file" | awk '{print $1}') ;;
+        sha512) actual=$(sha512sum "$file" | awk '{print $1}') ;;
+        md5)    actual=$(md5sum    "$file" | awk '{print $1}') ;;
+    esac
+
+    if [[ "$actual" == "$expected" ]]; then
+        echo "checksum ok (${algo}: ${actual:0:16}...)"
+    else
+        echo "error: checksum mismatch!" >&2
+        echo "  expected: $expected" >&2
+        echo "  got:      $actual"   >&2
+        return 1
+    fi
+}
+
+# ── binary detection ──────────────────────────────────────────────────────────
+
+find_binary() {
+    local dir="$1" name="$2"
+    local p
+
+    # 1. exact name, executable
+    p=$(find "$dir" -name "$name" -type f -executable 2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 2. exact name, any permission (archive may not set +x)
+    p=$(find "$dir" -name "$name" -type f 2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 3. name.exe
+    p=$(find "$dir" -name "${name}.exe" -type f 2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 4. any executable outside doc/share/lib
+    p=$(find "$dir" -maxdepth 4 -type f -executable \
+        ! -path "*/doc/*" ! -path "*/share/*" ! -path "*/lib/*" \
+        ! -path "*/include/*" ! -name "*.sh" ! -name "*.py" \
+        2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 5. file whose name starts with <name>_ (e.g. terragrunt_linux_amd64)
+    p=$(find "$dir" -maxdepth 3 -name "${name}_*" -type f 2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 6. sole file in the archive root
+    local files
+    files=$(find "$dir" -maxdepth 2 -type f \
+        ! -name "*.txt" ! -name "*.md" ! -name "LICENSE*" ! -name "README*" \
+        2>/dev/null)
+    if [[ "$(wc -l <<< "$files")" -eq 1 ]]; then
+        echo "$files" && return
+    fi
+
+    return 1
+}
+
+# ── symlink ───────────────────────────────────────────────────────────────────
+
+do_link() {
+    local bin_path="$1" name="$2"
+    local link="${BIN_DIR}/${name}"
+    run mkdir -p "$BIN_DIR"
+    [[ -L "$link" ]] && run rm "$link"
+    run ln -s "$bin_path" "$link"
+    (( DRY_RUN )) || echo "linked: ${link} → ${bin_path}"
+}
+
+# ── commands ──────────────────────────────────────────────────────────────────
+
+cmd_install() {
+    need curl jq
+    local owner_repo="${1:?usage: gri install <owner/repo> [version]}"
+    local version="${2:-latest}"
+    local repo_name="${owner_repo#*/}"
+
+    local os arch
+    os=$(detect_os)
+    arch=$(detect_arch)
+
+    echo "fetching release info for ${owner_repo} (${version})..."
+    local release_json tag
+    release_json=$(fetch_release "$owner_repo" "$version")
+    tag=$(echo "$release_json" | jq -r '.tag_name')
+    echo "found: ${tag}"
+
+    local install_dir="${OPT_DIR}/${repo_name}/${tag}"
+    if [[ -d "$install_dir" ]]; then
+        echo "already installed at ${install_dir}"
+        local bin_path
+        if bin_path=$(find_binary "$install_dir" "$repo_name"); then
+            chmod +x "$bin_path"
+            do_link "$bin_path" "$repo_name"
+        fi
+        return
+    fi
+
+    local assets_json asset_line asset_name asset_url
+    assets_json=$(echo "$release_json" | jq '.assets')
+    asset_line=$(pick_asset "$assets_json" "$os" "$arch") || {
+        echo "no asset matched ${os}/${arch}. available assets:" >&2
+        echo "$assets_json" | jq -r '.[].name' >&2
+        die "use GRI_ASSET env to force a name, or file a bug"
+    }
+    asset_name=$(cut -f1 <<< "$asset_line")
+    asset_url=$(cut -f2  <<< "$asset_line")
+
+    if (( DRY_RUN )); then
+        echo "[dry-run] would download: ${asset_url}"
+        echo "[dry-run] would extract to: ${install_dir}"
+        echo "[dry-run] would link: ${BIN_DIR}/${repo_name} → ${install_dir}/${repo_name}"
+        return
+    fi
+
+    # fail fast if we can't write to the install dir
+    if ! mkdir -p "$install_dir" 2>/dev/null; then
+        die "cannot create ${install_dir}: permission denied\n  → run with sudo, or use --user to install in ~/.local"
+    fi
+
+    echo "downloading ${asset_name}..."
+    local tmp_dir
+    tmp_dir=$(mktemp -d)
+    trap "rm -rf '$tmp_dir'" EXIT
+
+    curl -L --progress-bar -o "${tmp_dir}/${asset_name}" "$asset_url"
+
+    # checksum verification
+    local ck_line ck_algo ck_url
+    if ck_line=$(find_checksum_asset "$assets_json" "$asset_name"); then
+        ck_algo=$(cut -f1 <<< "$ck_line")
+        ck_url=$(cut -f2  <<< "$ck_line")
+        echo "verifying checksum..."
+        curl -sfL -o "${tmp_dir}/checksums" "$ck_url"
+        verify_checksum "${tmp_dir}/${asset_name}" "$ck_algo" "${tmp_dir}/checksums" "$asset_name"
+    else
+        echo "warning: no checksum file found in release assets, skipping verification"
+    fi
+
+    mkdir -p "$install_dir"
+
+    case "${asset_name,,}" in
+        *.tar.gz|*.tgz)   tar  -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.bz2)         tar  -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.xz)          tar  -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.zip)             unzip -q   "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
+        *)
+            cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
+            chmod +x "${install_dir}/${repo_name}"
+            ;;
+    esac
+
+    echo "installed to ${install_dir}"
+
+    local bin_path
+    if bin_path=$(find_binary "$install_dir" "$repo_name"); then
+        chmod +x "$bin_path"
+        do_link "$bin_path" "$repo_name"
+    else
+        echo "warning: could not auto-detect binary"
+        echo "run: gri link ${repo_name} ${tag} <binary_name>"
+    fi
+}
+
+cmd_link() {
+    local name="${1:?usage: gri link <name> <version> <binary_name>}"
+    local version="${2:?usage: gri link <name> <version> <binary_name>}"
+    local binary="${3:?usage: gri link <name> <version> <binary_name>}"
+
+    local install_dir="${OPT_DIR}/${name}/${version}"
+    [[ -d "$install_dir" ]] || die "${install_dir} not found"
+
+    local bin_path
+    bin_path=$(find "$install_dir" -name "$binary" -type f | head -1) \
+        || die "'${binary}' not found in ${install_dir}"
+    chmod +x "$bin_path"
+    do_link "$bin_path" "$name"
+}
+
+cmd_switch() {
+    local name="${1:?usage: gri switch <name> <version>}"
+    local version="${2:?usage: gri switch <name> <version>}"
+
+    local install_dir="${OPT_DIR}/${name}/${version}"
+    [[ -d "$install_dir" ]] || die "${install_dir} not found"
+
+    local bin_path
+    bin_path=$(find_binary "$install_dir" "$name") \
+        || die "no executable found in ${install_dir} — try: gri link ${name} ${version} <binary>"
+    do_link "$bin_path" "$name"
+}
+
+cmd_list() {
+    local name="${1:?usage: gri list <name>}"
+    local base="${OPT_DIR}/${name}"
+    [[ -d "$base" ]] || die "no versions installed for '${name}'"
+
+    local active=""
+    local link="${BIN_DIR}/${name}"
+    [[ -L "$link" ]] && active=$(readlink "$link")
+
+    echo "installed versions of ${name}:"
+    for d in "${base}"/*/; do
+        local v="${d%/}"; v="${v##*/}"
+        if [[ "$active" == *"/${v}/"* ]]; then
+            echo "  * ${v}  (active)"
+        else
+            echo "    ${v}"
+        fi
+    done
+}
+
+cmd_versions() {
+    need curl jq
+    local owner_repo="${1:?usage: gri versions <owner/repo>}"
+    echo "latest releases for ${owner_repo}:"
+    curl -sf "${GITHUB_API}/repos/${owner_repo}/releases" \
+        | jq -r '.[].tag_name' | head -20
+}
+
+cmd_remove() {
+    local name="${1:?usage: gri remove <name> <version>}"
+    local version="${2:?usage: gri remove <name> <version>}"
+
+    local install_dir="${OPT_DIR}/${name}/${version}"
+    [[ -d "$install_dir" ]] || die "${install_dir} not found"
+
+    local link="${BIN_DIR}/${name}"
+    if [[ -L "$link" && "$(readlink "$link")" == *"/${version}/"* ]]; then
+        run rm "$link"
+        (( DRY_RUN )) || echo "removed symlink ${link} (was pointing to this version)"
+    fi
+
+    run rm -rf "$install_dir"
+    (( DRY_RUN )) || echo "removed ${install_dir}"
+}
+
+# ── main ──────────────────────────────────────────────────────────────────────
+
+usage() {
+    cat <<EOF
+gri — GitHub Release Installer
+
+usage:
+  gri [flags] install  <owner/repo> [version]   download and install a release
+  gri [flags] switch   <name> <version>         switch the active version
+  gri [flags] link     <name> <version> <bin>   manually set the binary to link
+  gri [flags] list     <name>                   list locally installed versions
+  gri         versions <owner/repo>             list available releases on GitHub
+  gri [flags] remove   <name> <version>         remove an installed version
+
+flags (combinable, any position):
+  --user / -u     install in ~/.local/opt and ~/.local/bin  (no sudo required)
+  --dry-run / -n  print what would happen without doing it
+
+environment:
+  GRI_OPT_DIR   override install base (/opt with default, ~/.local/opt with --user)
+  GRI_BIN_DIR   override symlink dir  (/usr/local/bin with default, ~/.local/bin with --user)
+
+examples:
+  gri install junegunn/fzf                  # → /opt/fzf/v0.73.1/ + /usr/local/bin/fzf
+  gri --user install junegunn/fzf           # → ~/.local/opt/fzf/v0.73.1/ + ~/.local/bin/fzf
+  gri --user --dry-run install cli/cli      # preview user-mode install
+  gri install cli/cli v2.50.0
+  gri switch fzf v0.53.0
+  gri remove fzf v0.53.0
+EOF
+}
+
+# strip global flags from any position in args
+args=()
+for arg in "$@"; do
+    case "$arg" in
+        --dry-run|-n) DRY_RUN=1 ;;
+        --user|-u)    USER_MODE=1 ;;
+        *) args+=("$arg") ;;
+    esac
+done
+set -- "${args[@]+"${args[@]}"}"
+
+if (( USER_MODE )); then
+    OPT_DIR="${GRI_OPT_DIR:-${HOME}/.local/opt}"
+    BIN_DIR="${GRI_BIN_DIR:-${HOME}/.local/bin}"
+    mkdir -p "$BIN_DIR"
+fi
+
+case "${1:-help}" in
+    install)  shift; cmd_install  "$@" ;;
+    switch)   shift; cmd_switch   "$@" ;;
+    link)     shift; cmd_link     "$@" ;;
+    list)     shift; cmd_list     "$@" ;;
+    versions) shift; cmd_versions "$@" ;;
+    remove)   shift; cmd_remove   "$@" ;;
+    help|--help|-h) usage ;;
+    *) echo "unknown command: $1"; usage >&2; exit 1 ;;
+esac
