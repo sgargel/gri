@@ -1,4 +1,4 @@
-# gri — GitHub Release Installer
+# gri _(aka GitHub Release Installer)_
 
 A small bash script that downloads GitHub releases and installs them properly:
 binaries land in `/opt/<name>/<version>/` with a symlink in `/usr/local/bin/`.
@@ -7,7 +7,7 @@ Supports multiple coexisting versions and SHA256/SHA512 checksum verification.
 
 ## Requirements
 
-`curl`, `jq`, `sha256sum` / `sha512sum` / `md5sum` (for checksum verification — pre-installed on most Linux distros)
+`curl`, `jq`, `tar`, `unzip` (for `.zip` releases) — `sha256sum` / `sha512sum` / `md5sum` for checksum verification. All are pre-installed on most Linux distros except `unzip`.
 
 ## Install
 

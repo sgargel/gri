@@ -104,19 +104,31 @@ score_asset() {
 pick_asset() {
     local assets_json="$1" os="$2" arch="$3"
     local best_score=0 best_name="" best_url=""
+    local fallback_name="" fallback_url="" fallback_count=0
 
     while IFS=$'\t' read -r name url; do
-        local s
+        local s n="${name,,}"
         s=$(score_asset "$name" "$os" "$arch")
         if (( s > best_score )); then
             best_score=$s
             best_name=$name
             best_url=$url
         fi
+        # track non-package assets as fallback for platform-agnostic releases
+        [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|dmg|sig|pem|txt|json|html|asc)$ ]] && continue
+        (( fallback_count++ ))
+        fallback_name=$name
+        fallback_url=$url
     done < <(echo "$assets_json" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
 
-    [[ -z "$best_url" ]] && return 1
-    printf '%s\t%s' "$best_name" "$best_url"
+    if [[ -n "$best_url" ]]; then
+        printf '%s\t%s' "$best_name" "$best_url"
+    elif [[ $fallback_count -eq 1 ]]; then
+        # single unambiguous asset — platform-agnostic release (e.g. a shell script)
+        printf '%s\t%s' "$fallback_name" "$fallback_url"
+    else
+        return 1
+    fi
 }
 
 # ── checksum ─────────────────────────────────────────────────────────────────
@@ -310,10 +322,10 @@ cmd_install() {
     mkdir -p "$install_dir"
 
     case "${asset_name,,}" in
-        *.tar.gz|*.tgz)   tar  -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.bz2)         tar  -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.xz)          tar  -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.zip)             unzip -q   "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
+        *.tar.gz|*.tgz)   need tar;  tar   -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.bz2)         need tar;  tar   -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.xz)          need tar;  tar   -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.zip)             need unzip; unzip -q  "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
         *)
             cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
             chmod +x "${install_dir}/${repo_name}"
