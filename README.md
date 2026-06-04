@@ -29,6 +29,14 @@ release provides them.
 gri is a single bash script with no config files, no registries, and no
 manifest. `gri install owner/repo` and you're done.
 
+## Verify
+
+```bash
+gri list gri
+# installed versions of gri:
+#   * v0.0.2  (active)
+```
+
 ## Requirements
 
 `curl`, `jq`, `tar`, `unzip` (for `.zip` releases) — `sha256sum` / `sha512sum` / `md5sum` for checksum verification. All are pre-installed on most Linux distros except `unzip`.
