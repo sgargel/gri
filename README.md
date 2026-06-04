@@ -1,9 +1,33 @@
 # gri _(aka GitHub Release Installer)_
 
-A small bash script that downloads GitHub releases and installs them properly:
-binaries land in `/opt/<name>/<version>/` with a symlink in `/usr/local/bin/`.
+A lot of great CLI tools — `k9s`, `lazygit`, `terragrunt`, `aws-vault` and many
+others — are only distributed as GitHub releases. Installing them manually means
+downloading an archive, extracting it somewhere, and remembering to keep it
+updated. Package managers either don't have them or ship outdated versions.
 
-Supports multiple coexisting versions and SHA256/SHA512 checksum verification.
+gri automates this with a layout that follows Linux conventions:
+
+```
+/opt/fzf/v0.73.1/       ← full release lives here
+/usr/local/bin/fzf       → symlink to the binary
+```
+
+Multiple versions coexist under `/opt/<name>/` and switching between them is a
+single command. Downloads are verified against SHA256/SHA512 checksums when the
+release provides them.
+
+## Why not eget / aqua / mise?
+
+- **[eget](https://github.com/zyedidia/eget)** — closest in spirit, but drops
+  the binary wherever you tell it without any version structure. Also currently
+  unmaintained.
+- **[aqua](https://aquaproj.github.io/)** — declarative and powerful, but
+  requires a YAML manifest and a separate registry.
+- **[mise](https://mise.jdx.dev/)** — great for runtimes (Go, Node, Python);
+  overkill for standalone CLI binaries.
+
+gri is a single bash script with no config files, no registries, and no
+manifest. `gri install owner/repo` and you're done.
 
 ## Requirements
 
