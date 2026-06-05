@@ -178,8 +178,9 @@ verify_checksum() {
     local file="$1" algo="$2" ckfile="$3" asset_name="$4"
     local expected actual
 
-    # extract the hash for our specific asset from the checksum file
-    expected=$(grep -F "$asset_name" "$ckfile" | awk '{print $1}' | head -1)
+    # extract the hash by matching the exact filename in column 2
+    # handles both "hash  filename" and "hash  ./filename" formats
+    expected=$(awk -v f="$asset_name" '$2 == f || $2 == "./"f {print $1; exit}' "$ckfile")
     [[ -z "$expected" ]] && { echo "warning: '${asset_name}' not found in checksum file, skipping verification" >&2; return 0; }
 
     case "$algo" in
