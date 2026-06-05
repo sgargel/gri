@@ -219,7 +219,7 @@ check_archive_entries() {
     esac
 
     # reject absolute paths and .. as a path component
-    bad=$(printf '%s\n' "$entries" | grep -E '(^/|(^|/)\.\.(/|$))') || true
+    bad=$(printf '%s\n' "$entries" | grep -E '(^/|(^|/)\.\.(/|$))' || true)
     [[ -n "$bad" ]] && die "archive contains unsafe paths — aborting:\n${bad}"
     return 0
 }
