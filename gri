@@ -218,9 +218,22 @@ check_archive_entries() {
         *)           return 0 ;;
     esac
 
-    # reject absolute paths and .. as a path component
+    [[ -z "$entries" ]] && die "cannot read archive (corrupted or unsupported format): ${file}"
+
+    # reject absolute paths and .. as a path component in entry names
     bad=$(printf '%s\n' "$entries" | grep -E '(^/|(^|/)\.\.(/|$))' || true)
     [[ -n "$bad" ]] && die "archive contains unsafe paths — aborting:\n${bad}"
+
+    # check symlink targets in tar archives (tar -tv format: "linkname -> target")
+    case "$fmt" in
+        tgz|tar.gz|tar.bz2|tar.xz)
+            bad=$(tar -tvf "$file" 2>/dev/null \
+                | awk '/ -> /{n=split($0,a," -> "); print a[n]}' \
+                | grep -E '(^/|(^|/)\.\.(/|$))' || true)
+            [[ -n "$bad" ]] && die "archive contains symlinks with unsafe targets — aborting:\n${bad}"
+            ;;
+    esac
+
     return 0
 }
 
