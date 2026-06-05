@@ -198,6 +198,27 @@ verify_checksum() {
     fi
 }
 
+# ── archive safety ───────────────────────────────────────────────────────────
+
+# check_archive_entries FILE FMT — abort if archive contains unsafe paths
+check_archive_entries() {
+    local file="$1" fmt="$2"
+    local entries bad
+
+    case "$fmt" in
+        tgz|tar.gz)  entries=$(tar -tzf "$file" 2>/dev/null) ;;
+        tar.bz2)     entries=$(tar -tjf "$file" 2>/dev/null) ;;
+        tar.xz)      entries=$(tar -tJf "$file" 2>/dev/null) ;;
+        zip)         entries=$(unzip -Z1 "$file" 2>/dev/null) ;;
+        *)           return 0 ;;
+    esac
+
+    # reject absolute paths and .. as a path component
+    bad=$(printf '%s\n' "$entries" | grep -E '(^/|(^|/)\.\.(/|$))') || true
+    [[ -n "$bad" ]] && die "archive contains unsafe paths — aborting:\n${bad}"
+    return 0
+}
+
 # ── binary detection ──────────────────────────────────────────────────────────
 
 find_binary() {
@@ -323,10 +344,10 @@ cmd_install() {
     mkdir -p "$install_dir"
 
     case "${asset_name,,}" in
-        *.tar.gz|*.tgz)   need tar;  tar   -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.bz2)         need tar;  tar   -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.xz)          need tar;  tar   -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.zip)             need unzip; unzip -q  "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
+        *.tar.gz|*.tgz)   need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tgz;    tar --no-same-owner -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.bz2)         need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.bz2; tar --no-same-owner -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.xz)          need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.xz;  tar --no-same-owner -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.zip)             need unzip; check_archive_entries "${tmp_dir}/${asset_name}" zip;    unzip -q "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
         *)
             cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
             chmod +x "${install_dir}/${repo_name}"
