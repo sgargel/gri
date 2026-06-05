@@ -239,11 +239,18 @@ extract_and_validate() {
     mkdir -p "$staging"
 
     # extract into staging — TAR_EXTRA carries --no-same-owner if supported
+    # use return 1 (not die/exit) so callers can catch failure in if/&&/||;
+    # bash suspends set -e inside functions called from those contexts, so
+    # an explicit || { ...; return 1; } is required for reliable propagation
     case "$fmt" in
-        tgz|tar.gz)  need tar;   tar "${TAR_EXTRA[@]}" -xzf "$archive" -C "$staging" ;;
-        tar.bz2)     need tar;   tar "${TAR_EXTRA[@]}" -xjf "$archive" -C "$staging" ;;
-        tar.xz)      need tar;   tar "${TAR_EXTRA[@]}" -xJf "$archive" -C "$staging" ;;
-        zip)         need unzip; unzip -q "$archive" -d "$staging" ;;
+        tgz|tar.gz)  need tar;   tar "${TAR_EXTRA[@]}" -xzf "$archive" -C "$staging" \
+                                  || { rm -rf "$staging"; printf 'error: extraction failed: %s\n' "$archive" >&2; return 1; } ;;
+        tar.bz2)     need tar;   tar "${TAR_EXTRA[@]}" -xjf "$archive" -C "$staging" \
+                                  || { rm -rf "$staging"; printf 'error: extraction failed: %s\n' "$archive" >&2; return 1; } ;;
+        tar.xz)      need tar;   tar "${TAR_EXTRA[@]}" -xJf "$archive" -C "$staging" \
+                                  || { rm -rf "$staging"; printf 'error: extraction failed: %s\n' "$archive" >&2; return 1; } ;;
+        zip)         need unzip; unzip -q "$archive" -d "$staging" \
+                                  || { rm -rf "$staging"; printf 'error: extraction failed: %s\n' "$archive" >&2; return 1; } ;;
     esac
 
     # canonical path of staging root — realpath is safe here because staging
@@ -276,7 +283,8 @@ extract_and_validate() {
 
     if [[ -n "$escape" ]]; then
         rm -rf "$staging"
-        die "archive contains symlink escaping install directory:\n  ${escape}"
+        printf 'error: archive contains symlink escaping install directory:\n  %s\n' "$escape" >&2
+        return 1
     fi
 
     # validation passed — move content into install_dir
@@ -540,6 +548,10 @@ examples:
   gri remove fzf v0.53.0
 EOF
 }
+
+# allow sourcing this file (e.g. from test.sh) to access internal functions
+# without running the dispatch — has no effect during normal execution
+[[ "${BASH_SOURCE[0]}" != "${0}" ]] && return 0
 
 # strip global flags from any position in args
 args=()
