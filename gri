@@ -278,6 +278,8 @@ cmd_install() {
     need curl jq
     local owner_repo="${1:?usage: gri install <owner/repo> [version]}"
     local version="${2:-latest}"
+    [[ "$owner_repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
+        || die "invalid repo format '${owner_repo}' — expected owner/repo"
     local repo_name="${owner_repo#*/}"
 
     local os arch
@@ -418,6 +420,8 @@ cmd_list() {
 cmd_versions() {
     need curl jq
     local owner_repo="${1:?usage: gri versions <owner/repo>}"
+    [[ "$owner_repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
+        || die "invalid repo format '${owner_repo}' — expected owner/repo"
     echo "latest releases for ${owner_repo}:"
     curl -sf "${GITHUB_API}/repos/${owner_repo}/releases" \
         | jq -r '.[].tag_name' | head -20
