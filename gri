@@ -7,6 +7,10 @@ GITHUB_API="https://api.github.com"
 DRY_RUN=0
 USER_MODE=0
 
+# probe once: --no-same-owner is GNU tar only, BSD tar silently ignores or errors
+TAR_EXTRA=()
+tar --help 2>&1 | grep -q -- '--no-same-owner' && TAR_EXTRA=(--no-same-owner)
+
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 die() { printf 'error: %b\n' "$*" >&2; exit 1; }
@@ -347,9 +351,9 @@ cmd_install() {
     mkdir -p "$install_dir"
 
     case "${asset_name,,}" in
-        *.tar.gz|*.tgz)   need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tgz;    tar --no-same-owner -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.bz2)         need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.bz2; tar --no-same-owner -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.xz)          need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.xz;  tar --no-same-owner -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.gz|*.tgz)   need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tgz;     tar "${TAR_EXTRA[@]}" -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.bz2)         need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.bz2; tar "${TAR_EXTRA[@]}" -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
+        *.tar.xz)          need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.xz;  tar "${TAR_EXTRA[@]}" -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
         *.zip)             need unzip; check_archive_entries "${tmp_dir}/${asset_name}" zip;    unzip -q "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
         *)
             cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
