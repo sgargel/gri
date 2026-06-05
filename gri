@@ -205,36 +205,85 @@ verify_checksum() {
 
 # ── archive safety ───────────────────────────────────────────────────────────
 
-# check_archive_entries FILE FMT — abort if archive contains unsafe paths
-check_archive_entries() {
-    local file="$1" fmt="$2"
-    local entries bad
+# Resolve a path lexically (normalize .. and .) WITHOUT following symlinks.
+# This is what we need to check whether a symlink target stays inside staging:
+# we want to know where the path *points*, not what it dereferences to.
+# Tries GNU realpath -s, then Python os.path.normpath as fallback.
+_resolve_lexical() {
+    realpath -s "$1" 2>/dev/null \
+        || realpath --no-symlinks "$1" 2>/dev/null \
+        || python3 -c "import os,sys; print(os.path.normpath(sys.argv[1]))" "$1" 2>/dev/null \
+        || die "cannot normalize path — install GNU coreutils or python3"
+}
 
+# extract_and_validate ARCHIVE FMT INSTALL_DIR TMP_DIR
+#
+# Strategy: extract to a private staging dir, validate every symlink on disk,
+# then move into place. This is fundamentally more robust than parsing the
+# archive listing because:
+#   - No dependence on tar/unzip output format (locale, version, tar flavour)
+#   - Covers hardlinks (safe by definition: same inode, can't escape a dir)
+#   - Covers zip symlinks uniformly (find -type l works after any extractor)
+#   - Validates what is ACTUALLY on disk, not what the archive claims
+#
+# Known limitations:
+#   - Filenames with newlines: handled via -print0 / read -d ''
+#   - Relative symlinks that stay in staging but use the staging path in their
+#     target will break after cp -a to install_dir (edge case, never seen in
+#     real release archives)
+#   - Device files / fifos in archives: not rejected here; tar drops them
+#     unless run as root with --preserve-permissions, so low risk in practice
+extract_and_validate() {
+    local archive="$1" fmt="$2" install_dir="$3" tmp_dir="$4"
+    local staging="${tmp_dir}/staging"
+    mkdir -p "$staging"
+
+    # extract into staging — TAR_EXTRA carries --no-same-owner if supported
     case "$fmt" in
-        tgz|tar.gz)  entries=$(tar -tzf "$file" 2>/dev/null) ;;
-        tar.bz2)     entries=$(tar -tjf "$file" 2>/dev/null) ;;
-        tar.xz)      entries=$(tar -tJf "$file" 2>/dev/null) ;;
-        zip)         entries=$(unzip -Z1 "$file" 2>/dev/null) ;;
-        *)           return 0 ;;
+        tgz|tar.gz)  need tar;   tar "${TAR_EXTRA[@]}" -xzf "$archive" -C "$staging" ;;
+        tar.bz2)     need tar;   tar "${TAR_EXTRA[@]}" -xjf "$archive" -C "$staging" ;;
+        tar.xz)      need tar;   tar "${TAR_EXTRA[@]}" -xJf "$archive" -C "$staging" ;;
+        zip)         need unzip; unzip -q "$archive" -d "$staging" ;;
     esac
 
-    [[ -z "$entries" ]] && die "cannot read archive (corrupted or unsupported format): ${file}"
+    # canonical path of staging root — realpath is safe here because staging
+    # is a freshly created directory, not a symlink
+    local staging_real
+    staging_real=$(realpath "$staging")
 
-    # reject absolute paths and .. as a path component in entry names
-    bad=$(printf '%s\n' "$entries" | grep -E '(^/|(^|/)\.\.(/|$))' || true)
-    [[ -n "$bad" ]] && die "archive contains unsafe paths — aborting:\n${bad}"
+    # walk every symlink in staging and verify its effective target stays inside
+    local escape=""
+    while IFS= read -r -d '' link; do
+        local target link_dir resolved
+        target=$(readlink "$link")
+        link_dir=$(dirname "$link")
 
-    # check symlink targets in tar archives (tar -tv format: "linkname -> target")
-    case "$fmt" in
-        tgz|tar.gz|tar.bz2|tar.xz)
-            bad=$(tar -tvf "$file" 2>/dev/null \
-                | awk '/ -> /{n=split($0,a," -> "); print a[n]}' \
-                | grep -E '(^/|(^|/)\.\.(/|$))' || true)
-            [[ -n "$bad" ]] && die "archive contains symlinks with unsafe targets — aborting:\n${bad}"
-            ;;
-    esac
+        if [[ "$target" = /* ]]; then
+            # absolute target: resolve lexically from root
+            resolved=$(_resolve_lexical "$target")
+        else
+            # relative target: anchor to the symlink's own directory, then normalize
+            # e.g. staging/sub/link -> ../../outside  becomes  /tmp/.../outside
+            resolved=$(_resolve_lexical "${link_dir}/${target}")
+        fi
 
-    return 0
+        # the resolved path must be staging_real or a descendant of it
+        if [[ "$resolved" != "$staging_real" && "$resolved" != "$staging_real/"* ]]; then
+            escape="${link} -> ${target}  (resolves to ${resolved})"
+            break
+        fi
+    done < <(find "$staging" -type l -print0)
+
+    if [[ -n "$escape" ]]; then
+        rm -rf "$staging"
+        die "archive contains symlink escaping install directory:\n  ${escape}"
+    fi
+
+    # validation passed — move content into install_dir
+    # cp -a preserves symlinks as-is (does not follow them)
+    mkdir -p "$install_dir"
+    cp -a "$staging/." "$install_dir/"
+    rm -rf "$staging"
 }
 
 # ── binary detection ──────────────────────────────────────────────────────────
@@ -361,14 +410,13 @@ cmd_install() {
         echo "warning: no checksum file found in release assets, skipping verification"
     fi
 
-    mkdir -p "$install_dir"
-
     case "${asset_name,,}" in
-        *.tar.gz|*.tgz)   need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tgz;     tar "${TAR_EXTRA[@]}" -xzf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.bz2)         need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.bz2; tar "${TAR_EXTRA[@]}" -xjf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.tar.xz)          need tar;   check_archive_entries "${tmp_dir}/${asset_name}" tar.xz;  tar "${TAR_EXTRA[@]}" -xJf "${tmp_dir}/${asset_name}" -C "$install_dir" ;;
-        *.zip)             need unzip; check_archive_entries "${tmp_dir}/${asset_name}" zip;    unzip -q "${tmp_dir}/${asset_name}" -d "$install_dir" ;;
+        *.tar.gz|*.tgz)  extract_and_validate "${tmp_dir}/${asset_name}" tgz     "$install_dir" "$tmp_dir" ;;
+        *.tar.bz2)       extract_and_validate "${tmp_dir}/${asset_name}" tar.bz2  "$install_dir" "$tmp_dir" ;;
+        *.tar.xz)        extract_and_validate "${tmp_dir}/${asset_name}" tar.xz   "$install_dir" "$tmp_dir" ;;
+        *.zip)           extract_and_validate "${tmp_dir}/${asset_name}" zip      "$install_dir" "$tmp_dir" ;;
         *)
+            mkdir -p "$install_dir"
             cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
             chmod +x "${install_dir}/${repo_name}"
             ;;
