@@ -15,5 +15,20 @@ jobs:
       - name: Install dependencies
         run: sudo apt-get install -y jq unzip
 
+      - name: Environment info
+        run: |
+          bash --version
+          tar --version | head -1
+          realpath --version 2>/dev/null || echo "realpath: no --version flag"
+          realpath -s /tmp 2>/dev/null && echo "realpath -s: ok" || echo "realpath -s: not supported"
+          python3 --version 2>/dev/null || echo "python3: not found"
+
       - name: Run tests
-        run: bash test.sh
+        run: bash test.sh 2>&1 | tee /tmp/test-output.txt; exit ${PIPESTATUS[0]}
+
+      - name: Upload test output
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: /tmp/test-output.txt
