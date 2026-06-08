@@ -121,3 +121,4 @@ install continues.
 |---|---|---|
 | `GRI_OPT_DIR` | `/opt` | Override install base directory |
 | `GRI_BIN_DIR` | `/usr/local/bin` | Override symlink directory |
+| `GITHUB_TOKEN` | _(unset)_ | Personal access token or `${{ secrets.GITHUB_TOKEN }}` — required for private repos, raises API rate limit from 60 to 5000 req/h |
