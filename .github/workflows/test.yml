@@ -23,6 +23,9 @@ jobs:
           realpath -s /tmp 2>/dev/null && echo "realpath -s: ok" || echo "realpath -s: not supported"
           python3 --version 2>/dev/null || echo "python3: not found"
 
+      - name: Shellcheck
+        run: shellcheck gri test.sh
+
       - name: Run tests
         run: bash test.sh 2>&1 | tee /tmp/test-output.txt; exit ${PIPESTATUS[0]}
 
