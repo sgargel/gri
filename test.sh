@@ -208,10 +208,12 @@ OPT_SMOKE=$(mktemp -d)
 BIN_SMOKE=$(mktemp -d)
 trap 'rm -rf "$TMPDIR_SEC" "$OPT_SMOKE" "$BIN_SMOKE"' EXIT
 
-if GRI_OPT_DIR="$OPT_SMOKE" GRI_BIN_DIR="$BIN_SMOKE" "$GRI" install junegunn/fzf &>/dev/null; then
+smoke_out=""
+if smoke_out=$(GRI_OPT_DIR="$OPT_SMOKE" GRI_BIN_DIR="$BIN_SMOKE" "$GRI" install junegunn/fzf 2>&1); then
     ok "gri install junegunn/fzf"
 else
     fail "gri install junegunn/fzf"
+    printf '%s\n' "$smoke_out" >&2
 fi
 
 if [[ -x "$BIN_SMOKE/fzf" ]] || [[ -L "$BIN_SMOKE/fzf" ]]; then

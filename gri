@@ -8,6 +8,10 @@ DRY_RUN=0
 USER_MODE=0
 tmp_dir=""
 
+# build curl auth header from GITHUB_TOKEN if set
+CURL_AUTH=()
+[[ -n "${GITHUB_TOKEN:-}" ]] && CURL_AUTH=(-H "Authorization: Bearer ${GITHUB_TOKEN}")
+
 # probe once: --no-same-owner is GNU tar only, BSD tar silently ignores or errors
 TAR_EXTRA=()
 tar --help 2>&1 | grep -q -- '--no-same-owner' && TAR_EXTRA=(--no-same-owner)
@@ -63,13 +67,13 @@ fetch_release() {
         local v="${version#v}"
         url="${GITHUB_API}/repos/${owner_repo}/releases/tags/${version}"
         # try without leading 'v' if first attempt fails
-        curl -sf "$url" 2>/dev/null \
-            || curl -sf "${GITHUB_API}/repos/${owner_repo}/releases/tags/v${v}" \
+        curl -sf "${CURL_AUTH[@]}" "$url" 2>/dev/null \
+            || curl -sf "${CURL_AUTH[@]}" "${GITHUB_API}/repos/${owner_repo}/releases/tags/v${v}" \
             || die "release '${version}' not found for ${owner_repo}"
         return
     fi
 
-    curl -sf "$url" || die "could not fetch release for ${owner_repo}"
+    curl -sf "${CURL_AUTH[@]}" "$url" || die "could not fetch release for ${owner_repo}"
 }
 
 # ── asset selection ───────────────────────────────────────────────────────────
