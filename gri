@@ -6,6 +6,7 @@ BIN_DIR="${GRI_BIN_DIR:-/usr/local/bin}"
 GITHUB_API="https://api.github.com"
 DRY_RUN=0
 USER_MODE=0
+tmp_dir=""
 
 # probe once: --no-same-owner is GNU tar only, BSD tar silently ignores or errors
 TAR_EXTRA=()
@@ -14,6 +15,7 @@ tar --help 2>&1 | grep -q -- '--no-same-owner' && TAR_EXTRA=(--no-same-owner)
 # ── helpers ──────────────────────────────────────────────────────────────────
 
 die() { printf 'error: %b\n' "$*" >&2; exit 1; }
+cleanup() { [[ -n "$tmp_dir" ]] && rm -rf "$tmp_dir"; }
 
 # run CMD [ARGS...] — execute or print depending on --dry-run
 run() {
@@ -83,14 +85,11 @@ score_asset() {
     # OS: must match, otherwise skip
     case "$os" in
         linux)
-            [[ "$n" =~ linux ]]          && ((score += 10)) || { echo 0; return; }
-            ;;
+            if [[ "$n" =~ linux ]];          then ((score += 10)); else echo 0; return; fi ;;
         darwin)
-            [[ "$n" =~ darwin|macos|osx ]] && ((score += 10)) || { echo 0; return; }
-            ;;
+            if [[ "$n" =~ darwin|macos|osx ]]; then ((score += 10)); else echo 0; return; fi ;;
         windows)
-            [[ "$n" =~ windows|win ]]    && ((score += 10)) || { echo 0; return; }
-            ;;
+            if [[ "$n" =~ windows|win ]];    then ((score += 10)); else echo 0; return; fi ;;
     esac
 
     # arch
@@ -161,9 +160,9 @@ find_checksum_asset() {
             "sha512sums"|"sha512sums.txt")
                 result_algo="sha512"; result_url="$url"; break ;;
             # wildcard fallbacks — keep iterating in case an exact match comes later
-            *checksums*|*sha256sum*|*sha256sums*)
+            *checksums*|*sha256sum*)
                 [[ -z "$fallback_url" ]] && fallback_algo="sha256" && fallback_url="$url" ;;
-            *sha512sum*|*sha512sums*)
+            *sha512sum*)
                 [[ -z "$fallback_url" ]] && fallback_algo="sha512" && fallback_url="$url" ;;
         esac
     done < <(echo "$assets_json" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
@@ -400,9 +399,8 @@ cmd_install() {
     fi
 
     echo "downloading ${asset_name}..."
-    local tmp_dir
     tmp_dir=$(mktemp -d)
-    trap "rm -rf '$tmp_dir'" EXIT
+    trap cleanup EXIT
 
     curl -L --progress-bar -o "${tmp_dir}/${asset_name}" "$asset_url"
 
