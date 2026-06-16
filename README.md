@@ -83,9 +83,11 @@ Flags can appear anywhere in the command line and can be combined.
 # system-wide (requires sudo)
 sudo gri install junegunn/fzf
 sudo gri install cli/cli v2.50.0
+sudo gri install yannh/kubeconform
 
 # user install, no sudo
 gri --user install gruntwork-io/terragrunt
+gri --user install yannh/kubeconform
 
 # preview before installing
 gri --dry-run install junegunn/fzf
