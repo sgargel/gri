@@ -543,6 +543,7 @@ environment:
 
 examples:
   gri install junegunn/fzf                  # → /opt/fzf/v0.73.1/ + /usr/local/bin/fzf
+  gri install yannh/kubeconform             # → /opt/kubeconform/v0.6.7/ + /usr/local/bin/kubeconform
   gri --user install junegunn/fzf           # → ~/.local/opt/fzf/v0.73.1/ + ~/.local/bin/fzf
   gri --user --dry-run install cli/cli      # preview user-mode install
   gri install cli/cli v2.50.0

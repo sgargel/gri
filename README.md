@@ -1,7 +1,7 @@
 # gri _(aka GitHub Release Installer)_
 
 A lot of great CLI tools — `k9s`, `lazygit`, `terragrunt`, `aws-vault` and many
-others — are only distributed as GitHub releases. Installing them manually means
+others — are mainly distributed as GitHub releases. Installing them manually means
 downloading an archive, extracting it somewhere, and remembering to keep it
 updated. Package managers either don't have them or ship outdated versions.
 
@@ -83,9 +83,11 @@ Flags can appear anywhere in the command line and can be combined.
 # system-wide (requires sudo)
 sudo gri install junegunn/fzf
 sudo gri install cli/cli v2.50.0
+sudo gri install yannh/kubeconform
 
 # user install, no sudo
 gri --user install gruntwork-io/terragrunt
+gri --user install yannh/kubeconform
 
 # preview before installing
 gri --dry-run install junegunn/fzf
