@@ -121,6 +121,10 @@ the download before extracting. Supports `checksums.txt` (goreleaser),
 sidecar files. If no checksum file is found, a warning is printed and the
 install continues.
 
+## License
+
+MIT — see [LICENSE](LICENSE).
+
 ## Environment variables
 
 | Variable | Default | Description |
