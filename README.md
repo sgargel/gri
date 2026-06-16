@@ -74,6 +74,7 @@ gri remove  <name> <version>         # remove an installed version
 |---|---|
 | `--user` / `-u` | Install in `~/.local/opt` and `~/.local/bin` (no sudo required) |
 | `--dry-run` / `-n` | Print what would happen without doing anything |
+| `--allow-missing-checksum` / `-k` | Proceed even if the release provides no checksum file |
 
 Flags can appear anywhere in the command line and can be combined.
 
@@ -88,6 +89,9 @@ sudo gri install yannh/kubeconform
 # user install, no sudo
 gri --user install gruntwork-io/terragrunt
 gri --user install yannh/kubeconform
+
+# release with no checksum file (explicit opt-out)
+gri --allow-missing-checksum install stackrox/kube-linter
 
 # preview before installing
 gri --dry-run install junegunn/fzf

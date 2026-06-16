@@ -6,6 +6,7 @@ BIN_DIR="${GRI_BIN_DIR:-/usr/local/bin}"
 GITHUB_API="https://api.github.com"
 DRY_RUN=0
 USER_MODE=0
+ALLOW_MISSING_CHECKSUM=0
 tmp_dir=""
 
 # build curl auth header from GITHUB_TOKEN if set
@@ -417,7 +418,11 @@ cmd_install() {
         curl -sfL -o "${tmp_dir}/checksums" "$ck_url"
         verify_checksum "${tmp_dir}/${asset_name}" "$ck_algo" "${tmp_dir}/checksums" "$asset_name"
     else
-        echo "warning: no checksum file found in release assets, skipping verification"
+        if (( ALLOW_MISSING_CHECKSUM )); then
+            echo "warning: --allow-missing-checksum set, proceeding without verification" >&2
+        else
+            die "no checksum file found in release assets\n  → use --allow-missing-checksum to install without verification"
+        fi
     fi
 
     case "${asset_name,,}" in
@@ -534,8 +539,9 @@ usage:
   gri [flags] remove   <name> <version>         remove an installed version
 
 flags (combinable, any position):
-  --user / -u     install in ~/.local/opt and ~/.local/bin  (no sudo required)
-  --dry-run / -n  print what would happen without doing it
+  --user / -u       install in ~/.local/opt and ~/.local/bin  (no sudo required)
+  --dry-run / -n    print what would happen without doing it
+  --allow-missing-checksum / -k  proceed even if the release provides no checksum file
 
 environment:
   GRI_OPT_DIR   override install base (/opt with default, ~/.local/opt with --user)
@@ -560,8 +566,9 @@ EOF
 args=()
 for arg in "$@"; do
     case "$arg" in
-        --dry-run|-n) DRY_RUN=1 ;;
-        --user|-u)    USER_MODE=1 ;;
+        --dry-run|-n)  DRY_RUN=1    ;;
+        --user|-u)     USER_MODE=1  ;;
+        --allow-missing-checksum|-k) ALLOW_MISSING_CHECKSUM=1 ;;
         *) args+=("$arg") ;;
     esac
 done
