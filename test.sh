@@ -85,7 +85,40 @@ check_output "-n is alias for --dry-run"       "\[dry-run\]" \
 check_output "--dry-run flag accepted anywhere" "\[dry-run\]" \
     "$GRI" install --dry-run junegunn/fzf
 
-# ── 5. prefix comparison — staging-evil attack ────────────────────────────────
+# ── 5. allow-missing-checksum ────────────────────────────────────────────────
+
+section "allow-missing-checksum"
+
+_ck_assets_none='[{"name":"tool-linux-amd64.tar.gz","browser_download_url":"http://x/tool.tar.gz"}]'
+_ck_assets_present='[{"name":"tool-linux-amd64.tar.gz","browser_download_url":"http://x/tool.tar.gz"},{"name":"checksums.txt","browser_download_url":"http://x/checksums.txt"}]'
+
+check_fails "find_checksum_asset: no checksum asset returns 1" \
+    find_checksum_asset "$_ck_assets_none" "tool-linux-amd64.tar.gz"
+
+check "find_checksum_asset: checksums.txt present returns 0" \
+    find_checksum_asset "$_ck_assets_present" "tool-linux-amd64.tar.gz"
+
+check_output "missing checksum without flag: error mentions --allow-missing-checksum" \
+    "allow-missing-checksum" \
+    bash -c "source '$GRI'
+             assets=\$'[{\"name\":\"t.tar.gz\",\"browser_download_url\":\"http://x\"}]'
+             if ! find_checksum_asset \"\$assets\" 't.tar.gz'; then
+                 (( ALLOW_MISSING_CHECKSUM )) \
+                     && echo 'warning: --allow-missing-checksum set, proceeding without verification' >&2 \
+                     || die 'no checksum file found in release assets\n  → use --allow-missing-checksum to install without verification'
+             fi"
+
+check_output "missing checksum with --allow-missing-checksum: warning printed" \
+    "proceeding without verification" \
+    bash -c "source '$GRI'; ALLOW_MISSING_CHECKSUM=1
+             assets=\$'[{\"name\":\"t.tar.gz\",\"browser_download_url\":\"http://x\"}]'
+             if ! find_checksum_asset \"\$assets\" 't.tar.gz'; then
+                 (( ALLOW_MISSING_CHECKSUM )) \
+                     && echo 'warning: --allow-missing-checksum set, proceeding without verification' >&2 \
+                     || die 'no checksum file found'
+             fi"
+
+# ── 6. prefix comparison — staging-evil attack ───────────────────────────────
 
 section "prefix comparison"
 
@@ -105,7 +138,7 @@ check_fails "/stagingX is rejected"              _prefix_check "/staging" "/stag
 check_fails "absolute escape is rejected"        _prefix_check "/staging" "/etc/passwd"
 check_fails "sibling dir is rejected"            _prefix_check "/staging" "/tmp/other"
 
-# ── 6. archive security ───────────────────────────────────────────────────────
+# ── 7. archive security ───────────────────────────────────────────────────────
 
 section "archive security"
 
@@ -200,7 +233,7 @@ tar -czf "$TMPDIR_SEC/clean.tar.gz" -C "$TMPDIR_SEC/clean-src" mytool
 _expect_allow "tar: clean archive is allowed" \
     "$TMPDIR_SEC/clean.tar.gz" tgz
 
-# ── 7. smoke install (real network) ──────────────────────────────────────────
+# ── 8. smoke install (real network) ──────────────────────────────────────────
 
 section "smoke install (network)"
 
