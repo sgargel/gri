@@ -85,7 +85,50 @@ check_output "-n is alias for --dry-run"       "\[dry-run\]" \
 check_output "--dry-run flag accepted anywhere" "\[dry-run\]" \
     "$GRI" install --dry-run junegunn/fzf
 
-# ── 5. allow-missing-checksum ────────────────────────────────────────────────
+# ── 5. kubectl-plugin ────────────────────────────────────────────────────────
+
+section "kubectl-plugin"
+
+_KP_OPT=$(mktemp -d); _KP_BIN_DRY=$(mktemp -d)
+trap 'rm -rf "$_KP_OPT" "$_KP_BIN_DRY"' EXIT
+check_output "--kubectl-plugin dry-run prints kubectl symlink line" "kubectl-oidc_login" \
+    env GRI_OPT_DIR="$_KP_OPT" GRI_BIN_DIR="$_KP_BIN_DRY" \
+    "$GRI" --dry-run --kubectl-plugin=oidc_login install int128/kubelogin
+
+_KP_BIN=$(mktemp -d)
+_KP_BIN_FILE="${_KP_BIN}/kubelogin"
+echo "#!/bin/sh" > "$_KP_BIN_FILE"
+chmod +x "$_KP_BIN_FILE"
+_KP_LINK_DIR=$(mktemp -d)
+trap 'rm -rf "$_KP_BIN" "$_KP_LINK_DIR"' EXIT
+
+bash -c "
+    source '$GRI'
+    BIN_DIR='$_KP_LINK_DIR'
+    KUBECTL_PLUGIN='oidc_login'
+    do_link '$_KP_BIN_FILE' kubelogin
+" &>/dev/null
+
+check "do_link creates kubectl-<name> symlink when KUBECTL_PLUGIN is set" \
+    test -L "$_KP_LINK_DIR/kubectl-oidc_login"
+
+check "kubectl-<name> symlink points to the binary" \
+    test "$(readlink "$_KP_LINK_DIR/kubectl-oidc_login")" = "$_KP_BIN_FILE"
+
+check "normal symlink is also created alongside kubectl symlink" \
+    test -L "$_KP_LINK_DIR/kubelogin"
+
+bash -c "
+    source '$GRI'
+    BIN_DIR='$_KP_LINK_DIR'
+    KUBECTL_PLUGIN=''
+    do_link '$_KP_BIN_FILE' kubelogin
+" &>/dev/null
+
+check_fails "do_link creates no kubectl-* symlink when KUBECTL_PLUGIN is unset" \
+    test -L "$_KP_LINK_DIR/kubectl-"
+
+# ── 6. allow-missing-checksum ─────────────────────────────────────────────────
 
 section "allow-missing-checksum"
 

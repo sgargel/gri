@@ -75,6 +75,7 @@ gri remove  <name> <version>         # remove an installed version
 | `--user` / `-u` | Install in `~/.local/opt` and `~/.local/bin` (no sudo required) |
 | `--dry-run` / `-n` | Print what would happen without doing anything |
 | `--allow-missing-checksum` / `-k` | Proceed even if the release provides no checksum file |
+| `--kubectl-plugin=<name>` | Also create a `kubectl-<name>` symlink so the binary is discoverable as a kubectl plugin |
 
 Flags can appear anywhere in the command line and can be combined.
 
@@ -92,6 +93,9 @@ gri --user install yannh/kubeconform
 
 # release with no checksum file (explicit opt-out)
 gri --allow-missing-checksum install stackrox/kube-linter
+
+# install a kubectl plugin (creates both kubelogin and kubectl-oidc_login symlinks)
+sudo gri --kubectl-plugin=oidc_login install int128/kubelogin
 
 # preview before installing
 gri --dry-run install junegunn/fzf
