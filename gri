@@ -7,6 +7,7 @@ GITHUB_API="https://api.github.com"
 DRY_RUN=0
 USER_MODE=0
 ALLOW_MISSING_CHECKSUM=0
+KUBECTL_PLUGIN=""
 tmp_dir=""
 
 # build curl auth header from GITHUB_TOKEN if set
@@ -348,6 +349,13 @@ do_link() {
     [[ -L "$link" ]] && run rm "$link"
     run ln -s "$bin_path" "$link"
     (( DRY_RUN )) || echo "linked: ${link} → ${bin_path}"
+
+    if [[ -n "$KUBECTL_PLUGIN" ]]; then
+        local plugin_link="${BIN_DIR}/kubectl-${KUBECTL_PLUGIN}"
+        [[ -L "$plugin_link" ]] && run rm "$plugin_link"
+        run ln -s "$bin_path" "$plugin_link"
+        (( DRY_RUN )) || echo "linked: ${plugin_link} → ${bin_path}"
+    fi
 }
 
 # ── commands ──────────────────────────────────────────────────────────────────
@@ -395,6 +403,7 @@ cmd_install() {
         echo "[dry-run] would download: ${asset_url}"
         echo "[dry-run] would extract to: ${install_dir}"
         echo "[dry-run] would link: ${BIN_DIR}/${repo_name} → ${install_dir}/${repo_name}"
+        [[ -n "$KUBECTL_PLUGIN" ]] && echo "[dry-run] would link: ${BIN_DIR}/kubectl-${KUBECTL_PLUGIN} → ${install_dir}/${repo_name}"
         return
     fi
 
@@ -542,13 +551,15 @@ flags (combinable, any position):
   --user / -u       install in ~/.local/opt and ~/.local/bin  (no sudo required)
   --dry-run / -n    print what would happen without doing it
   --allow-missing-checksum / -k  proceed even if the release provides no checksum file
+  --kubectl-plugin=<name>        also create a kubectl-<name> symlink for use as a kubectl plugin
 
 environment:
   GRI_OPT_DIR   override install base (/opt with default, ~/.local/opt with --user)
   GRI_BIN_DIR   override symlink dir  (/usr/local/bin with default, ~/.local/bin with --user)
 
 examples:
-  gri install junegunn/fzf                  # → /opt/fzf/v0.73.1/ + /usr/local/bin/fzf
+  gri install junegunn/fzf                                    # → /opt/fzf/v0.73.1/ + /usr/local/bin/fzf
+  gri --kubectl-plugin=oidc_login install int128/kubelogin   # → also creates /usr/local/bin/kubectl-oidc_login
   gri install yannh/kubeconform             # → /opt/kubeconform/v0.6.7/ + /usr/local/bin/kubeconform
   gri --user install junegunn/fzf           # → ~/.local/opt/fzf/v0.73.1/ + ~/.local/bin/fzf
   gri --user --dry-run install cli/cli      # preview user-mode install
@@ -569,6 +580,7 @@ for arg in "$@"; do
         --dry-run|-n)  DRY_RUN=1    ;;
         --user|-u)     USER_MODE=1  ;;
         --allow-missing-checksum|-k) ALLOW_MISSING_CHECKSUM=1 ;;
+        --kubectl-plugin=*) KUBECTL_PLUGIN="${arg#--kubectl-plugin=}" ;;
         *) args+=("$arg") ;;
     esac
 done
