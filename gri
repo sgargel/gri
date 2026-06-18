@@ -383,7 +383,7 @@ cmd_install() {
         echo "already installed at ${install_dir}"
         local bin_path
         if bin_path=$(find_binary "$install_dir" "$repo_name"); then
-            chmod +x "$bin_path"
+            chmod +x "$bin_path" 2>/dev/null || true
             do_link "$bin_path" "$repo_name"
         fi
         return
@@ -403,8 +403,10 @@ cmd_install() {
         echo "[dry-run] would download: ${asset_url}"
         echo "[dry-run] would extract to: ${install_dir}"
         echo "[dry-run] would link: ${BIN_DIR}/${repo_name} → ${install_dir}/${repo_name}"
-        [[ -n "$KUBECTL_PLUGIN" ]] && echo "[dry-run] would link: ${BIN_DIR}/kubectl-${KUBECTL_PLUGIN} → ${install_dir}/${repo_name}"
-        return
+        if [[ -n "$KUBECTL_PLUGIN" ]]; then
+            echo "[dry-run] would link: ${BIN_DIR}/kubectl-${KUBECTL_PLUGIN} → ${install_dir}/${repo_name}"
+        fi
+        return 0
     fi
 
     # fail fast if we can't write to the install dir
