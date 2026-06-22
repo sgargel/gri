@@ -85,8 +85,11 @@ score_asset() {
     local n score=0
     n="${name,,}"
 
-    # skip package formats
-    [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe)$ ]] && echo 0 && return
+    # skip package formats and non-binary sidecars (signatures, certs).
+    # .asc/.sig/.pem matter here: some repos (e.g. helm) publish ONLY signature
+    # files on GitHub and host the real binaries elsewhere — without this we'd
+    # score helm-...-linux-amd64.tar.gz.asc as a binary and install a PGP sig.
+    [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|asc|sig|pem)$ ]] && echo 0 && return
 
     # OS: must match, otherwise skip
     case "$os" in
