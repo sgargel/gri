@@ -161,6 +161,29 @@ check_output "missing checksum with --allow-missing-checksum: warning printed" \
                      || die 'no checksum file found'
              fi"
 
+# ── asset selection ───────────────────────────────────────────────────────────
+
+section "asset selection"
+
+# signature/cert sidecars must not be scored as installable binaries
+check_output "score_asset: .asc signature scores 0" "^0$" \
+    score_asset "tool-linux-amd64.tar.gz.asc" linux amd64
+check_output "score_asset: .sig signature scores 0" "^0$" \
+    score_asset "tool-linux-amd64.tar.gz.sig" linux amd64
+check_output "score_asset: real archive still scores" "^1[0-9]$" \
+    score_asset "tool-linux-amd64.tar.gz" linux amd64
+
+# helm publishes ONLY .asc files on GitHub (binaries live on get.helm.sh) —
+# pick_asset must reject the release rather than install a signature file
+_helm_assets='[{"name":"helm-v4.2.2-linux-amd64.tar.gz.asc","browser_download_url":"http://x/a"},{"name":"helm-v4.2.2-linux-amd64.tar.gz.sha256.asc","browser_download_url":"http://x/b"}]'
+check_fails "pick_asset: all-.asc release (helm) returns 1" \
+    pick_asset "$_helm_assets" linux amd64
+
+# a release with both archive and its .asc still picks the archive
+_signed_assets='[{"name":"tool-linux-amd64.tar.gz","browser_download_url":"http://x/t"},{"name":"tool-linux-amd64.tar.gz.asc","browser_download_url":"http://x/s"}]'
+check_output "pick_asset: prefers archive over its .asc sidecar" "^tool-linux-amd64.tar.gz	" \
+    pick_asset "$_signed_assets" linux amd64
+
 # ── 6. prefix comparison — staging-evil attack ───────────────────────────────
 
 section "prefix comparison"
