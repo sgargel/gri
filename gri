@@ -89,16 +89,18 @@ score_asset() {
     # .asc/.sig/.pem matter here: some repos (e.g. helm) publish ONLY signature
     # files on GitHub and host the real binaries elsewhere — without this we'd
     # score helm-...-linux-amd64.tar.gz.asc as a binary and install a PGP sig.
-    [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|asc|sig|pem)$ ]] && echo 0 && return
+    [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|asc|sig|pem|flatpak)$ ]] && echo 0 && return
 
-    # OS: must match, otherwise skip
+    # OS: must match, otherwise skip.
+    # .appimage is Linux-only by definition, so treat it as a linux match even
+    # when the filename doesn't contain "linux" explicitly.
     case "$os" in
         linux)
-            if [[ "$n" =~ linux ]];          then ((score += 10)); else echo 0; return; fi ;;
+            if [[ "$n" =~ linux|\.appimage ]]; then ((score += 10)); else echo 0; return; fi ;;
         darwin)
             if [[ "$n" =~ darwin|macos|osx ]]; then ((score += 10)); else echo 0; return; fi ;;
         windows)
-            if [[ "$n" =~ windows|win ]];    then ((score += 10)); else echo 0; return; fi ;;
+            if [[ "$n" =~ windows|win ]]; then ((score += 10)); else echo 0; return; fi ;;
     esac
 
     # arch
@@ -107,8 +109,8 @@ score_asset() {
         arm64) [[ "$n" =~ arm64|aarch64 ]]     && ((score += 5)) ;;
     esac
 
-    # prefer archives over raw binaries (archives contain the full release)
-    [[ "$n" =~ \.(tar\.gz|tgz|tar\.bz2|tar\.xz|zip)$ ]] && ((score += 2))
+    # prefer archives and AppImages over raw binaries (they are self-contained)
+    [[ "$n" =~ \.(tar\.gz|tgz|tar\.bz2|tar\.xz|zip|appimage)$ ]] && ((score += 2))
 
     echo "$score"
 }
@@ -127,7 +129,7 @@ pick_asset() {
             best_url=$url
         fi
         # track non-package assets as fallback for platform-agnostic releases
-        [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|dmg|sig|pem|txt|json|html|asc)$ ]] && continue
+        [[ "$n" =~ \.(deb|rpm|apk|msi|pkg|exe|dmg|flatpak|sig|pem|txt|json|html|asc)$ ]] && continue
         [[ "$n" =~ ^(sha256sums|sha512sums|md5sums|checksums|sha256sum|sha512sum)$ ]] && continue
         (( fallback_count++ ))
         fallback_name=$name
@@ -316,22 +318,26 @@ find_binary() {
     p=$(find "$dir" -name "$name" -type f 2>/dev/null | head -1)
     [[ -n "$p" ]] && echo "$p" && return
 
-    # 3. name.exe
+    # 3. AppImage (keep original extension for appimaged/LAUNCHER integration)
+    p=$(find "$dir" -maxdepth 1 \( -name "*.AppImage" -o -name "*.appimage" \) -type f 2>/dev/null | head -1)
+    [[ -n "$p" ]] && echo "$p" && return
+
+    # 4. name.exe
     p=$(find "$dir" -name "${name}.exe" -type f 2>/dev/null | head -1)
     [[ -n "$p" ]] && echo "$p" && return
 
-    # 4. any executable outside doc/share/lib
+    # 5. any executable outside doc/share/lib
     p=$(find "$dir" -maxdepth 4 -type f -executable \
         ! -path "*/doc/*" ! -path "*/share/*" ! -path "*/lib/*" \
         ! -path "*/include/*" ! -name "*.sh" ! -name "*.py" \
         2>/dev/null | head -1)
     [[ -n "$p" ]] && echo "$p" && return
 
-    # 5. file whose name starts with <name>_ (e.g. terragrunt_linux_amd64)
+    # 6. file whose name starts with <name>_ (e.g. terragrunt_linux_amd64)
     p=$(find "$dir" -maxdepth 3 -name "${name}_*" -type f 2>/dev/null | head -1)
     [[ -n "$p" ]] && echo "$p" && return
 
-    # 6. sole file in the archive root
+    # 7. sole file in the archive root
     local files
     files=$(find "$dir" -maxdepth 2 -type f \
         ! -name "*.txt" ! -name "*.md" ! -name "LICENSE*" ! -name "README*" \
@@ -444,6 +450,11 @@ cmd_install() {
         *.tar.bz2)       extract_and_validate "${tmp_dir}/${asset_name}" tar.bz2  "$install_dir" "$tmp_dir" ;;
         *.tar.xz)        extract_and_validate "${tmp_dir}/${asset_name}" tar.xz   "$install_dir" "$tmp_dir" ;;
         *.zip)           extract_and_validate "${tmp_dir}/${asset_name}" zip      "$install_dir" "$tmp_dir" ;;
+        *.appimage)
+            mkdir -p "$install_dir"
+            cp "${tmp_dir}/${asset_name}" "${install_dir}/${asset_name}"
+            chmod +x "${install_dir}/${asset_name}"
+            ;;
         *)
             mkdir -p "$install_dir"
             cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
@@ -569,6 +580,7 @@ examples:
   gri --user install junegunn/fzf           # → ~/.local/opt/fzf/v0.73.1/ + ~/.local/bin/fzf
   gri --user --dry-run install cli/cli      # preview user-mode install
   gri install cli/cli v2.50.0
+  gri install amule-org/amule 3.0.1         # AppImage → /opt/amule/3.0.1/ + /usr/local/bin/amule
   gri switch fzf v0.53.0
   gri remove fzf v0.53.0
 EOF
