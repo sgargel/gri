@@ -412,8 +412,12 @@ cmd_install() {
         return 0
     fi
 
-    # fail fast if we can't write to the install dir
-    if ! mkdir -p "$install_dir" 2>/dev/null; then
+    # fail fast: verify writability without creating the directory
+    local check_dir="$install_dir"
+    while [[ "$check_dir" != "/" && ! -d "$check_dir" ]]; do
+        check_dir=$(dirname "$check_dir")
+    done
+    if [[ ! -w "$check_dir" ]]; then
         die "cannot create ${install_dir}: permission denied\n  → run with sudo, or use --user to install in ~/.local"
     fi
 
