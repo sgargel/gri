@@ -107,9 +107,6 @@ score_asset() {
         arm64) [[ "$n" =~ arm64|aarch64 ]]     && ((score += 5)) ;;
     esac
 
-    # prefer archives over raw binaries (archives contain the full release)
-    [[ "$n" =~ \.(tar\.gz|tgz|tar\.bz2|tar\.xz|zip)$ ]] && ((score += 2))
-
     echo "$score"
 }
 
