@@ -299,7 +299,43 @@ tar -czf "$TMPDIR_SEC/clean.tar.gz" -C "$TMPDIR_SEC/clean-src" mytool
 _expect_allow "tar: clean archive is allowed" \
     "$TMPDIR_SEC/clean.tar.gz" tgz
 
-# ── 8. stale directory prevention ──────────────────────────────────────────────
+# ── 8. AppImage ────────────────────────────────────────────────────────────────
+
+section "AppImage"
+
+check_output "score_asset: AppImage linux amd64 scores > 0" "^[1-9]" \
+    score_asset "tool-v1.0.0-linux-amd64.AppImage" linux amd64
+
+check_output "score_asset: AppImage on darwin returns 0" "^0$" \
+    score_asset "tool-v1.0.0-linux-amd64.AppImage" darwin amd64
+
+check_output "score_asset: flatpak returns 0" "^0$" \
+    score_asset "tool-v1.0.0-linux-amd64.flatpak" linux amd64
+
+_ai_assets1='[{"name":"tool-linux-amd64.flatpak","browser_download_url":"http://x/f"},{"name":"tool-linux-amd64.AppImage","browser_download_url":"http://x/a"},{"name":"tool-src.tar.gz","browser_download_url":"http://x/s"}]'
+check_output "pick_asset: prefers AppImage over Flatpak" "\.AppImage" \
+    pick_asset "$_ai_assets1" linux amd64
+
+# AppImage without "linux" in name — still selected via .appimage OS detection
+_ai_no_linux='[{"name":"tool-x86_64.AppImage","browser_download_url":"http://x/a"},{"name":"tool-src.tar.gz","browser_download_url":"http://x/s"}]'
+check_output "pick_asset: AppImage without 'linux' in name selected on linux" "\.AppImage" \
+    pick_asset "$_ai_no_linux" linux amd64
+
+_ai_find_tmp=$(mktemp -d)
+echo "fake" > "$_ai_find_tmp/mytool-v1.0.0-x86_64.AppImage"
+chmod +x "$_ai_find_tmp/mytool-v1.0.0-x86_64.AppImage"
+trap 'rm -rf "$_ai_find_tmp"' EXIT
+check_output "find_binary: finds .AppImage file" "\.AppImage$" \
+    find_binary "$_ai_find_tmp" mytool
+
+_ai_find_tmp2=$(mktemp -d)
+echo "fake" > "$_ai_find_tmp2/mytool.appimage"
+chmod +x "$_ai_find_tmp2/mytool.appimage"
+trap 'rm -rf "$_ai_find_tmp2"' EXIT
+check_output "find_binary: finds .appimage (lowercase)" "\.appimage$" \
+    find_binary "$_ai_find_tmp2" mytool
+
+# ── 9. stale directory prevention ──────────────────────────────────────────────
 
 section "stale directory prevention"
 
@@ -345,6 +381,54 @@ if "$BIN_SMOKE/fzf" --version &>/dev/null; then
     ok "fzf --version runs"
 else
     fail "fzf --version failed"
+fi
+
+# ── 11. amule AppImage smoke test (real network) ──────────────────────────────
+
+section "amule smoke test (network)"
+
+_AMULE_OPT=$(mktemp -d)
+_AMULE_BIN=$(mktemp -d)
+trap 'rm -rf "$_AMULE_OPT" "$_AMULE_BIN"' EXIT
+
+# Scenario 1: install without checksums must fail and leave NO stale directory.
+_amule_fail_out=""
+if _amule_fail_out=$(GRI_OPT_DIR="$_AMULE_OPT" GRI_BIN_DIR="$_AMULE_BIN" \
+    "$GRI" install amule-org/amule 3.0.1 2>&1); then
+    fail "amule: install without checksum should fail"
+    printf '%s\n' "$_amule_fail_out" >&2
+else
+    ok "amule: install without checksum fails as expected"
+fi
+
+if [[ -d "$_AMULE_OPT/amule/3.0.1" ]]; then
+    fail "amule: stale directory found after failed install"
+else
+    ok "amule: no stale directory after failed install"
+fi
+
+# Scenario 2: retry with --allow-missing-checksum — must succeed.
+_amule_ok_out=""
+if _amule_ok_out=$(GRI_OPT_DIR="$_AMULE_OPT" GRI_BIN_DIR="$_AMULE_BIN" \
+    "$GRI" --allow-missing-checksum install amule-org/amule 3.0.1 2>&1); then
+    ok "amule: install with --allow-missing-checksum succeeds"
+else
+    fail "amule: install with --allow-missing-checksum failed"
+    printf '%s\n' "$_amule_ok_out" >&2
+fi
+
+# Verify the AppImage was installed with its original filename
+_amule_target=$(readlink "$_AMULE_BIN/amule" 2>/dev/null || echo "")
+if [[ "$_amule_target" == *.AppImage ]]; then
+    ok "amule: symlink points to .AppImage file (extension preserved)"
+else
+    fail "amule: symlink points to ${_amule_target} (expected .AppImage)"
+fi
+
+if [[ -x "$_amule_target" ]] || [[ -x "$_AMULE_BIN/amule" ]]; then
+    ok "amule: binary is executable"
+else
+    fail "amule: binary not executable"
 fi
 
 # ── summary ───────────────────────────────────────────────────────────────────
