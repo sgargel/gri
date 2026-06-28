@@ -299,7 +299,27 @@ tar -czf "$TMPDIR_SEC/clean.tar.gz" -C "$TMPDIR_SEC/clean-src" mytool
 _expect_allow "tar: clean archive is allowed" \
     "$TMPDIR_SEC/clean.tar.gz" tgz
 
-# ── 8. smoke install (real network) ──────────────────────────────────────────
+# ── 8. stale directory prevention ──────────────────────────────────────────────
+
+section "stale directory prevention"
+
+_sd_parent=$(mktemp -d)
+_sd_imaginary="${_sd_parent}/deep/nested/install"
+trap 'rm -rf "$_sd_parent"' EXIT
+
+bash -c "
+    source '$GRI'
+    check_dir='$_sd_imaginary'
+    while [[ \"\$check_dir\" != \"/\" && ! -d \"\$check_dir\" ]]; do
+        check_dir=\$(dirname \"\$check_dir\")
+    done
+    [[ -w \"\$check_dir\" ]]
+" &>/dev/null
+
+check "writability check does not create the install directory" \
+    test ! -d "$_sd_imaginary"
+
+# ── 9. smoke install (real network) ───────────────────────────────────────────
 
 section "smoke install (network)"
 
