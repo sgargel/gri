@@ -76,6 +76,7 @@ gri remove  <name> <version>         # remove an installed version
 | `--dry-run` / `-n` | Print what would happen without doing anything |
 | `--allow-missing-checksum` / `-k` | Proceed even if the release provides no checksum file |
 | `--kubectl-plugin=<name>` | Also create a `kubectl-<name>` symlink so the binary is discoverable as a kubectl plugin |
+| `--as=<name>` | Install and link under an alternative tool name (e.g. `--as=gh cli/cli`) |
 
 Flags can appear anywhere in the command line and can be combined.
 
@@ -84,12 +85,15 @@ Flags can appear anywhere in the command line and can be combined.
 ```bash
 # system-wide (requires sudo)
 sudo gri install junegunn/fzf
-sudo gri install cli/cli v2.50.0
+sudo gri --as=gh install cli/cli v2.50.0
 sudo gri install yannh/kubeconform
 
 # user install, no sudo
 gri --user install gruntwork-io/terragrunt
 gri --user install yannh/kubeconform
+
+# install under an alternative tool name
+gri --as=gh install cli/cli
 
 # release with no checksum file (explicit opt-out)
 gri --allow-missing-checksum install stackrox/kube-linter

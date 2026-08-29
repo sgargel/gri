@@ -128,7 +128,20 @@ bash -c "
 check_fails "do_link creates no kubectl-* symlink when KUBECTL_PLUGIN is unset" \
     test -L "$_KP_LINK_DIR/kubectl-"
 
-# ── 6. allow-missing-checksum ─────────────────────────────────────────────────
+# ── 6. install --as ────────────────────────────────────────────────────────────
+
+section "install --as"
+
+check_output "--as dry-run prints customized extraction path" "/gh/" \
+    "$GRI" --dry-run --as=gh install cli/cli
+check_output "--as dry-run prints customized symlink line" "bin/gh →" \
+    "$GRI" --dry-run --as=gh install cli/cli
+check_output "--as flag accepted anywhere in arguments" "bin/gh →" \
+    "$GRI" install cli/cli --as=gh --dry-run
+check_output "rejects invalid --as name" "invalid name" \
+    "$GRI" --dry-run --as="bad/name" install cli/cli
+
+# ── 7. allow-missing-checksum ─────────────────────────────────────────────────
 
 section "allow-missing-checksum"
 

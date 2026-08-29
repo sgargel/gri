@@ -8,6 +8,7 @@ DRY_RUN=0
 USER_MODE=0
 ALLOW_MISSING_CHECKSUM=0
 KUBECTL_PLUGIN=""
+INSTALL_AS=""
 tmp_dir=""
 
 # build curl auth header from GITHUB_TOKEN if set
@@ -376,6 +377,11 @@ cmd_install() {
     [[ "$owner_repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
         || die "invalid repo format '${owner_repo}' — expected owner/repo"
     local repo_name="${owner_repo#*/}"
+    local name="${INSTALL_AS:-$repo_name}"
+    if [[ -n "$INSTALL_AS" ]]; then
+        [[ "$INSTALL_AS" =~ ^[A-Za-z0-9._-]+$ ]] \
+            || die "invalid name '${INSTALL_AS}' for --as — expected alphanumeric string"
+    fi
 
     local os arch
     os=$(detect_os)
@@ -387,13 +393,13 @@ cmd_install() {
     tag=$(echo "$release_json" | jq -r '.tag_name')
     echo "found: ${tag}"
 
-    local install_dir="${OPT_DIR}/${repo_name}/${tag}"
+    local install_dir="${OPT_DIR}/${name}/${tag}"
     if [[ -d "$install_dir" ]]; then
         echo "already installed at ${install_dir}"
         local bin_path
-        if bin_path=$(find_binary "$install_dir" "$repo_name"); then
+        if bin_path=$(find_binary "$install_dir" "$name") || bin_path=$(find_binary "$install_dir" "$repo_name"); then
             chmod +x "$bin_path" 2>/dev/null || true
-            do_link "$bin_path" "$repo_name"
+            do_link "$bin_path" "$name"
         fi
         return
     fi
@@ -411,9 +417,9 @@ cmd_install() {
     if (( DRY_RUN )); then
         echo "[dry-run] would download: ${asset_url}"
         echo "[dry-run] would extract to: ${install_dir}"
-        echo "[dry-run] would link: ${BIN_DIR}/${repo_name} → ${install_dir}/${repo_name}"
+        echo "[dry-run] would link: ${BIN_DIR}/${name} → ${install_dir}/${name}"
         if [[ -n "$KUBECTL_PLUGIN" ]]; then
-            echo "[dry-run] would link: ${BIN_DIR}/kubectl-${KUBECTL_PLUGIN} → ${install_dir}/${repo_name}"
+            echo "[dry-run] would link: ${BIN_DIR}/kubectl-${KUBECTL_PLUGIN} → ${install_dir}/${name}"
         fi
         return 0
     fi
@@ -461,20 +467,20 @@ cmd_install() {
             ;;
         *)
             mkdir -p "$install_dir"
-            cp "${tmp_dir}/${asset_name}" "${install_dir}/${repo_name}"
-            chmod +x "${install_dir}/${repo_name}"
+            cp "${tmp_dir}/${asset_name}" "${install_dir}/${name}"
+            chmod +x "${install_dir}/${name}"
             ;;
     esac
 
     echo "installed to ${install_dir}"
 
     local bin_path
-    if bin_path=$(find_binary "$install_dir" "$repo_name"); then
+    if bin_path=$(find_binary "$install_dir" "$name") || bin_path=$(find_binary "$install_dir" "$repo_name"); then
         chmod +x "$bin_path"
-        do_link "$bin_path" "$repo_name"
+        do_link "$bin_path" "$name"
     else
         echo "warning: could not auto-detect binary"
-        echo "run: gri link ${repo_name} ${tag} <binary_name>"
+        echo "run: gri link ${name} ${tag} <binary_name>"
     fi
 }
 
@@ -572,6 +578,7 @@ flags (combinable, any position):
   --dry-run / -n    print what would happen without doing it
   --allow-missing-checksum / -k  proceed even if the release provides no checksum file
   --kubectl-plugin=<name>        also create a kubectl-<name> symlink for use as a kubectl plugin
+  --as=<name>                    install and link under an alternative tool name (e.g. --as=gh cli/cli)
 
 environment:
   GRI_OPT_DIR   override install base (/opt with default, ~/.local/opt with --user)
@@ -579,6 +586,7 @@ environment:
 
 examples:
   gri install junegunn/fzf                                    # → /opt/fzf/v0.73.1/ + /usr/local/bin/fzf
+  gri --as=gh install cli/cli                                 # → /opt/gh/v2.98.0/ + /usr/local/bin/gh
   gri --kubectl-plugin=oidc_login install int128/kubelogin   # → also creates /usr/local/bin/kubectl-oidc_login
   gri install yannh/kubeconform             # → /opt/kubeconform/v0.6.7/ + /usr/local/bin/kubeconform
   gri --user install junegunn/fzf           # → ~/.local/opt/fzf/v0.73.1/ + ~/.local/bin/fzf
@@ -602,6 +610,7 @@ for arg in "$@"; do
         --user|-u)     USER_MODE=1  ;;
         --allow-missing-checksum|-k) ALLOW_MISSING_CHECKSUM=1 ;;
         --kubectl-plugin=*) KUBECTL_PLUGIN="${arg#--kubectl-plugin=}" ;;
+        --as=*)        INSTALL_AS="${arg#--as=}" ;;
         *) args+=("$arg") ;;
     esac
 done
