@@ -48,6 +48,31 @@ check_output() {
 
 section() { echo; echo "── $1 ──────────────────────────────────────────"; }
 
+# ── cleanup ───────────────────────────────────────────────────────────────────
+# a single EXIT trap over a global list — registering a new trap per section
+# would silently discard the previous one and orphan its temp dirs
+CLEANUP_PATHS=()
+
+# NOTE: not named `cleanup` — sourcing gri below would shadow it with gri's own
+# cleanup(), leaving the trap to remove gri's tmp_dir instead of ours
+# shellcheck disable=SC2317  # invoked indirectly by the EXIT trap
+cleanup_tmpdirs() {
+    (( ${#CLEANUP_PATHS[@]} )) && rm -rf "${CLEANUP_PATHS[@]}"
+    return 0
+}
+trap cleanup_tmpdirs EXIT
+
+# mktemp -d into the named variable, registered for removal at exit.
+# takes the variable name rather than printing the path: command substitution
+# runs in a subshell, so a printed path could not append to CLEANUP_PATHS.
+# usage: mktempd VARNAME
+mktempd() {
+    local d
+    d=$(mktemp -d)
+    CLEANUP_PATHS+=("$d")
+    printf -v "$1" '%s' "$d"
+}
+
 # ── load gri functions ────────────────────────────────────────────────────────
 # source without running dispatch — requires the guard in gri
 # shellcheck source=gri
@@ -89,18 +114,16 @@ check_output "--dry-run flag accepted anywhere" "\[dry-run\]" \
 
 section "kubectl-plugin"
 
-_KP_OPT=$(mktemp -d); _KP_BIN_DRY=$(mktemp -d)
-trap 'rm -rf "$_KP_OPT" "$_KP_BIN_DRY"' EXIT
+mktempd _KP_OPT; mktempd _KP_BIN_DRY
 check_output "--kubectl-plugin dry-run prints kubectl symlink line" "kubectl-oidc_login" \
     env GRI_OPT_DIR="$_KP_OPT" GRI_BIN_DIR="$_KP_BIN_DRY" \
     "$GRI" --dry-run --kubectl-plugin=oidc_login install int128/kubelogin
 
-_KP_BIN=$(mktemp -d)
+mktempd _KP_BIN
 _KP_BIN_FILE="${_KP_BIN}/kubelogin"
 echo "#!/bin/sh" > "$_KP_BIN_FILE"
 chmod +x "$_KP_BIN_FILE"
-_KP_LINK_DIR=$(mktemp -d)
-trap 'rm -rf "$_KP_BIN" "$_KP_LINK_DIR"' EXIT
+mktempd _KP_LINK_DIR
 
 bash -c "
     source '$GRI'
@@ -208,8 +231,7 @@ check_fails "sibling dir is rejected"            _prefix_check "/staging" "/tmp/
 
 section "archive security"
 
-TMPDIR_SEC=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_SEC"' EXIT
+mktempd TMPDIR_SEC
 
 # helper: run extract_and_validate against a crafted archive, expect die
 _expect_reject() {
@@ -303,9 +325,8 @@ _expect_allow "tar: clean archive is allowed" \
 
 section "smoke install (network)"
 
-OPT_SMOKE=$(mktemp -d)
-BIN_SMOKE=$(mktemp -d)
-trap 'rm -rf "$TMPDIR_SEC" "$OPT_SMOKE" "$BIN_SMOKE"' EXIT
+mktempd OPT_SMOKE
+mktempd BIN_SMOKE
 
 smoke_out=""
 if smoke_out=$(GRI_OPT_DIR="$OPT_SMOKE" GRI_BIN_DIR="$BIN_SMOKE" "$GRI" install junegunn/fzf 2>&1); then
