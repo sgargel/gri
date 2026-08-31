@@ -460,6 +460,52 @@ _place tool_linux_amd64 mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
 check "a raw binary is copied under the tool name" \
     test -x "${_GZ_INST}/mytool"
 
+# ── user mode side effects ────────────────────────────────────────────────────
+
+section "user mode side effects"
+
+# --user must only redirect paths. Anything that creates ~/.local/bin before a
+# command has decided to link something is a side effect the user did not ask
+# for — most visibly under --dry-run, which promises to touch nothing.
+mktempd _UM_HOME
+
+# run gri with a pristine HOME, so the real ~/.local/bin is never involved and
+# the default --user paths are what get exercised
+_gri_user() { ( HOME="$_UM_HOME" "$GRI" --user "$@" ); }
+
+check_fails "the fixture starts without ~/.local/bin" \
+    test -e "${_UM_HOME}/.local/bin"
+
+_gri_user help &>/dev/null || true
+check_fails "--user help creates no ~/.local/bin" \
+    test -e "${_UM_HOME}/.local/bin"
+
+_gri_user list nonexistent-tool &>/dev/null || true
+check_fails "--user list creates no ~/.local/bin" \
+    test -e "${_UM_HOME}/.local/bin"
+
+_gri_user not-a-command &>/dev/null || true
+check_fails "--user with an unknown command creates no ~/.local/bin" \
+    test -e "${_UM_HOME}/.local/bin"
+
+# the case in the issue
+_gri_user --dry-run install junegunn/fzf &>/dev/null || true
+check_fails "--user --dry-run install creates no ~/.local/bin" \
+    test -e "${_UM_HOME}/.local/bin"
+check_fails "--user --dry-run install creates no ~/.local/opt either" \
+    test -e "${_UM_HOME}/.local/opt"
+check_output "--user --dry-run install still previews the user-mode link path" "\.local/bin" \
+    _gri_user --dry-run install junegunn/fzf
+
+# the flip side: a real link must still create BIN_DIR on demand
+mktempd _UM_LINK_ROOT
+_UM_BIN="${_UM_LINK_ROOT}/not/yet/created"
+printf '#!/bin/sh\n' > "${_UM_LINK_ROOT}/mytool"
+chmod +x "${_UM_LINK_ROOT}/mytool"
+( BIN_DIR="$_UM_BIN" KUBECTL_PLUGIN="" do_link "${_UM_LINK_ROOT}/mytool" mytool ) &>/dev/null || true
+check "do_link still creates a missing BIN_DIR when it links" \
+    test -L "${_UM_BIN}/mytool"
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
