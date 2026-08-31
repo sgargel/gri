@@ -39,7 +39,7 @@ gri list gri
 
 ## Requirements
 
-`curl`, `jq`, `tar`, `unzip` (for `.zip` releases) — `sha256sum` / `sha512sum` / `md5sum` for checksum verification. All are pre-installed on most Linux distros except `unzip`.
+`curl`, `jq`, `tar`, `unzip` (for `.zip` releases), plus a hashing tool for checksum verification: `sha256sum` / `sha512sum` / `md5sum`, or the `shasum` / `md5` equivalents that macOS ships instead. All are pre-installed on most Linux distros except `unzip`.
 
 ## Install
 
@@ -75,6 +75,7 @@ gri remove  <name> <version>         # remove an installed version
 | `--user` / `-u` | Install in `~/.local/opt` and `~/.local/bin` (no sudo required) |
 | `--dry-run` / `-n` | Print what would happen without doing anything |
 | `--allow-missing-checksum` / `-k` | Proceed even if the release provides no checksum file |
+| `--allow-overwrite` | Replace a file in `BIN_DIR` that gri did not create. Without it, a non-symlink at the link name is refused rather than destroyed |
 | `--kubectl-plugin=<name>` | Also create a `kubectl-<name>` symlink so the binary is discoverable as a kubectl plugin |
 | `--as=<name>` | Install and link under an alternative tool name (e.g. `--as=gh cli/cli`) |
 
