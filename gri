@@ -7,6 +7,7 @@ GITHUB_API="https://api.github.com"
 DRY_RUN=0
 USER_MODE=0
 ALLOW_MISSING_CHECKSUM=0
+ALLOW_OVERWRITE=0
 KUBECTL_PLUGIN=""
 INSTALL_AS=""
 tmp_dir=""
@@ -376,21 +377,32 @@ find_binary() {
 
 # ── symlink ───────────────────────────────────────────────────────────────────
 
-# warn_if_replacing PATH — note that an existing non-symlink is about to go.
-# Replacing our own symlink is routine and stays quiet; clobbering a real file
-# (BIN_DIR defaults to /usr/local/bin, shared with package managers) is not.
-warn_if_replacing() {
-    local path="$1"
-    if [[ -e "$path" && ! -L "$path" ]]; then
-        echo "warning: replacing existing file ${path} with a symlink" >&2
-    fi
+# check_link_free NAME — refuse to clobber a regular file at a link we own.
+#
+# Replacing a symlink is routine: it destroys nothing but a pointer, and gri's
+# own links are symlinks. Replacing a regular file destroys its contents, and
+# BIN_DIR defaults to /usr/local/bin, which is shared with whatever else puts
+# binaries there. So that case fails closed and needs --allow-overwrite, the
+# same shape as --allow-missing-checksum.
+check_link_free() {
+    local name="$1" path
+    for path in "${BIN_DIR}/${name}" \
+                ${KUBECTL_PLUGIN:+"${BIN_DIR}/kubectl-${KUBECTL_PLUGIN}"}; do
+        [[ -e "$path" && ! -L "$path" ]] || continue
+        if (( ALLOW_OVERWRITE )); then
+            echo "warning: replacing existing file ${path} with a symlink" >&2
+        else
+            die "${path} already exists and is not a symlink\n  → gri did not create it; remove it yourself, or pass --allow-overwrite"
+        fi
+    done
+    return 0
 }
 
 do_link() {
     local bin_path="$1" name="$2"
     local link="${BIN_DIR}/${name}"
     run mkdir -p "$BIN_DIR"
-    warn_if_replacing "$link"
+    check_link_free "$name"
     # -f replaces whatever is already there (a plain file left by another
     # installer would otherwise make ln fail with "File exists"); -n keeps a
     # symlink-to-directory from being followed, which would link *inside* it
@@ -399,7 +411,6 @@ do_link() {
 
     if [[ -n "$KUBECTL_PLUGIN" ]]; then
         local plugin_link="${BIN_DIR}/kubectl-${KUBECTL_PLUGIN}"
-        warn_if_replacing "$plugin_link"
         run ln -sfn "$bin_path" "$plugin_link"
         (( DRY_RUN )) || echo "linked: ${plugin_link} → ${bin_path}"
     fi
@@ -450,6 +461,12 @@ cmd_install() {
     }
     asset_name=$(cut -f1 <<< "$asset_line")
     asset_url=$(cut -f2  <<< "$asset_line")
+
+    # do_link checks this too, but only after the download and extraction.
+    # Refusing here keeps a doomed install from leaving anything behind, and
+    # sits before the dry-run branch so a preview does not promise a link the
+    # real run would refuse to make.
+    check_link_free "$name"
 
     if (( DRY_RUN )); then
         echo "[dry-run] would download: ${asset_url}"
@@ -614,6 +631,7 @@ flags (combinable, any position):
   --user / -u       install in ~/.local/opt and ~/.local/bin  (no sudo required)
   --dry-run / -n    print what would happen without doing it
   --allow-missing-checksum / -k  proceed even if the release provides no checksum file
+  --allow-overwrite              replace an existing non-symlink file in BIN_DIR
   --kubectl-plugin=<name>        also create a kubectl-<name> symlink for use as a kubectl plugin
   --as=<name>                    install and link under an alternative tool name (e.g. --as=gh cli/cli)
 
@@ -646,6 +664,7 @@ for arg in "$@"; do
         --dry-run|-n)  DRY_RUN=1    ;;
         --user|-u)     USER_MODE=1  ;;
         --allow-missing-checksum|-k) ALLOW_MISSING_CHECKSUM=1 ;;
+        --allow-overwrite)           ALLOW_OVERWRITE=1 ;;
         --kubectl-plugin=*) KUBECTL_PLUGIN="${arg#--kubectl-plugin=}" ;;
         --as=*)        INSTALL_AS="${arg#--as=}" ;;
         *) args+=("$arg") ;;

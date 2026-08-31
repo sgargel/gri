@@ -289,7 +289,8 @@ _link_over() {
         plugin)   printf 'installed by a package manager\n' > "${_LC_DIR}/kubectl-oidc_login" ;;
         none)     ;;
     esac
-    BIN_DIR="$_LC_DIR" KUBECTL_PLUGIN="$plugin" do_link "$_LC_BIN_FILE" mytool
+    # subshell: do_link may die(), and that exit must not take the harness down
+    ( BIN_DIR="$_LC_DIR" KUBECTL_PLUGIN="$plugin" do_link "$_LC_BIN_FILE" mytool )
 }
 
 # succeeds when do_link's stderr matches PATTERN
@@ -299,41 +300,79 @@ _link_says() { local kind="$1" pat="$2"; _link_over "$kind" 2>&1 >/dev/null | gr
 # inside check(), so a do_link whose `ln` failed still returns 0 and the call
 # alone proves nothing — every guarantee below is asserted on the result.
 
-# the #20 regression: a plain file made ln -s fail with "File exists"
+# a regular file at the link name is somebody else's binary: refuse it rather
+# than destroy it, the same way a missing checksum refuses rather than trusting
+check_fails "do_link refuses to clobber a regular file" \
+    _link_over file
+check_output "the refusal names the path and the opt-in flag" "already exists and is not a symlink" \
+    _link_over file
+check_output "the refusal suggests --allow-overwrite" "allow-overwrite" \
+    _link_over file
 _link_over file &>/dev/null || true
-check "a regular file at the link name is replaced by a symlink" \
+check "the regular file is left untouched" \
+    grep -q "installed by a package manager" "${_LC_DIR}/mytool"
+check_fails "no symlink is created in its place" \
+    test -L "${_LC_DIR}/mytool"
+
+# ALLOW_OVERWRITE is the opt-in, and it warns rather than going quiet
+ALLOW_OVERWRITE=1
+_link_over file &>/dev/null || true
+check "--allow-overwrite replaces the regular file with a symlink" \
     test -L "${_LC_DIR}/mytool"
 check "the replacement symlink points at the new binary" \
     test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
-check_fails "replacing a regular file raises no 'File exists' error" \
+check_fails "replacing under --allow-overwrite raises no 'File exists' error" \
     _link_says file "File exists"
 check_output "replacing a regular file is announced" "warning: replacing existing file" \
     _link_over file
+ALLOW_OVERWRITE=0
 
-# a symlink-to-directory must be replaced, not followed into (this is what -n buys)
+# symlinks are ours to replace — destroying a pointer costs nothing, so these
+# stay silent and need no flag
+_link_over symlink &>/dev/null || true
+check "an existing plain symlink is still overwritten without a flag" \
+    test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
+check "overwriting a plain symlink prints no warning" \
+    test -z "$(_link_over symlink 2>&1 >/dev/null)"
+
+# a symlink to a directory must be replaced, not followed into (this is what -n buys)
 _link_over dirlink &>/dev/null || true
 check "a symlink to a directory is replaced, not linked into" \
     test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
 check_fails "no link is created inside the target directory" \
     test -e "${_LC_DIR}/real/mytool"
 
-# unchanged behaviour for the ordinary cases
-_link_over symlink &>/dev/null || true
-check "an existing plain symlink is still overwritten" \
-    test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
-check "overwriting a plain symlink prints no warning" \
-    test -z "$(_link_over symlink 2>&1 >/dev/null)"
-
 _link_over none &>/dev/null || true
 check "a symlink is created when nothing is in the way" \
     test -L "${_LC_DIR}/mytool"
 
-# the kubectl plugin link goes through the same collision handling
+# the kubectl plugin link is guarded too, even though the primary name is free
+check_fails "a regular file at the kubectl plugin link is refused" \
+    _link_over plugin oidc_login
 _link_over plugin oidc_login &>/dev/null || true
-check "kubectl plugin link survives a regular-file collision" \
+check_fails "the primary link is not created when the plugin link is blocked" \
+    test -L "${_LC_DIR}/mytool"
+ALLOW_OVERWRITE=1
+_link_over plugin oidc_login &>/dev/null || true
+check "--allow-overwrite lets the kubectl plugin link through" \
     test -L "${_LC_DIR}/kubectl-oidc_login"
 check "kubectl plugin link points at the binary" \
     test "$(readlink "${_LC_DIR}/kubectl-oidc_login")" = "$_LC_BIN_FILE"
+ALLOW_OVERWRITE=0
+
+# end-to-end: the install pre-flight refuses before anything is downloaded, and
+# a dry-run preview agrees with what the real run would do
+mktempd _LC_E2E_OPT; mktempd _LC_E2E_BIN
+printf 'installed by a package manager\n' > "${_LC_E2E_BIN}/fzf"
+
+check_output "install refuses when BIN_DIR/<name> is a regular file" "already exists and is not a symlink" \
+    env GRI_OPT_DIR="$_LC_E2E_OPT" GRI_BIN_DIR="$_LC_E2E_BIN" "$GRI" install junegunn/fzf
+check_fails "the refused install downloaded nothing" \
+    test -e "${_LC_E2E_OPT}/fzf"
+check_output "dry-run reports the collision instead of promising a link" "already exists and is not a symlink" \
+    env GRI_OPT_DIR="$_LC_E2E_OPT" GRI_BIN_DIR="$_LC_E2E_BIN" "$GRI" --dry-run install junegunn/fzf
+check_output "--allow-overwrite gets the dry-run preview through" "would link" \
+    env GRI_OPT_DIR="$_LC_E2E_OPT" GRI_BIN_DIR="$_LC_E2E_BIN" "$GRI" --dry-run --allow-overwrite install junegunn/fzf
 
 # ── asset selection ───────────────────────────────────────────────────────────
 
