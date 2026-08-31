@@ -188,6 +188,34 @@ find_checksum_asset() {
     fi
 }
 
+# hash_file ALGO FILE — print the hex digest of FILE
+# GNU coreutils ships sha256sum/sha512sum/md5sum; macOS ships neither, but does
+# provide shasum(1) and md5(1), so fall back to those before giving up
+hash_file() {
+    local algo="$1" file="$2"
+    case "$algo" in
+        sha256|sha512)
+            if command -v "${algo}sum" &>/dev/null; then
+                "${algo}sum" "$file" | awk '{print $1}'
+            elif command -v shasum &>/dev/null; then
+                shasum -a "${algo#sha}" "$file" | awk '{print $1}'
+            else
+                die "neither '${algo}sum' nor 'shasum' found — cannot verify the ${algo} checksum"
+            fi
+            ;;
+        md5)
+            if command -v md5sum &>/dev/null; then
+                md5sum "$file" | awk '{print $1}'
+            elif command -v md5 &>/dev/null; then
+                md5 -q "$file"
+            else
+                die "neither 'md5sum' nor 'md5' found — cannot verify the md5 checksum"
+            fi
+            ;;
+        *) die "unsupported checksum algorithm: ${algo}" ;;
+    esac
+}
+
 # verify_checksum FILE ALGO CHECKSUM_FILE ASSET_NAME
 verify_checksum() {
     local file="$1" algo="$2" ckfile="$3" asset_name="$4"
@@ -198,11 +226,7 @@ verify_checksum() {
     expected=$(awk -v f="$asset_name" '$2 == f || $2 == "./"f {print $1; exit}' "$ckfile")
     [[ -z "$expected" ]] && { echo "warning: '${asset_name}' not found in checksum file, skipping verification" >&2; return 0; }
 
-    case "$algo" in
-        sha256) actual=$(sha256sum "$file" | awk '{print $1}') ;;
-        sha512) actual=$(sha512sum "$file" | awk '{print $1}') ;;
-        md5)    actual=$(md5sum    "$file" | awk '{print $1}') ;;
-    esac
+    actual=$(hash_file "$algo" "$file")
 
     if [[ "$actual" == "$expected" ]]; then
         echo "checksum ok (${algo}: ${actual:0:16}...)"
@@ -352,18 +376,31 @@ find_binary() {
 
 # ── symlink ───────────────────────────────────────────────────────────────────
 
+# warn_if_replacing PATH — note that an existing non-symlink is about to go.
+# Replacing our own symlink is routine and stays quiet; clobbering a real file
+# (BIN_DIR defaults to /usr/local/bin, shared with package managers) is not.
+warn_if_replacing() {
+    local path="$1"
+    if [[ -e "$path" && ! -L "$path" ]]; then
+        echo "warning: replacing existing file ${path} with a symlink" >&2
+    fi
+}
+
 do_link() {
     local bin_path="$1" name="$2"
     local link="${BIN_DIR}/${name}"
     run mkdir -p "$BIN_DIR"
-    [[ -L "$link" ]] && run rm "$link"
-    run ln -s "$bin_path" "$link"
+    warn_if_replacing "$link"
+    # -f replaces whatever is already there (a plain file left by another
+    # installer would otherwise make ln fail with "File exists"); -n keeps a
+    # symlink-to-directory from being followed, which would link *inside* it
+    run ln -sfn "$bin_path" "$link"
     (( DRY_RUN )) || echo "linked: ${link} → ${bin_path}"
 
     if [[ -n "$KUBECTL_PLUGIN" ]]; then
         local plugin_link="${BIN_DIR}/kubectl-${KUBECTL_PLUGIN}"
-        [[ -L "$plugin_link" ]] && run rm "$plugin_link"
-        run ln -s "$bin_path" "$plugin_link"
+        warn_if_replacing "$plugin_link"
+        run ln -sfn "$bin_path" "$plugin_link"
         (( DRY_RUN )) || echo "linked: ${plugin_link} → ${bin_path}"
     fi
 }

@@ -198,6 +198,143 @@ check_output "missing checksum with --allow-missing-checksum: warning printed" \
                      || die 'no checksum file found'
              fi"
 
+# ── checksum tooling ──────────────────────────────────────────────────────────
+
+section "checksum tooling"
+
+mktempd _CK_DIR
+_CK_FILE="${_CK_DIR}/payload"
+printf 'gri checksum fixture\n' > "$_CK_FILE"
+
+check_output "hash_file sha256 matches sha256sum" "^$(sha256sum "$_CK_FILE" | awk '{print $1}')$" \
+    hash_file sha256 "$_CK_FILE"
+
+check_output "hash_file sha512 matches sha512sum" "^$(sha512sum "$_CK_FILE" | awk '{print $1}')$" \
+    hash_file sha512 "$_CK_FILE"
+
+# a PATH holding only the tools hash_file may legitimately use, so the GNU
+# *sum commands are genuinely absent — this is the only way the macOS
+# fallbacks get exercised on a GNU CI runner
+mktempd _CK_STUB
+ln -s "$(command -v awk)" "${_CK_STUB}/awk"
+_CK_ARGS="${_CK_DIR}/stub-args"
+
+cat > "${_CK_STUB}/shasum" <<'STUB'
+#!/bin/sh
+echo "$@" >> "$STUB_ARGS"
+echo "5ee5um  $3"
+STUB
+cat > "${_CK_STUB}/md5" <<'STUB'
+#!/bin/sh
+echo "$@" >> "$STUB_ARGS"
+echo "5ee5md5"
+STUB
+chmod +x "${_CK_STUB}/shasum" "${_CK_STUB}/md5"
+
+# run hash_file with PATH restricted to the stub dir
+_hash_stubbed() { ( PATH="$_CK_STUB"; STUB_ARGS="$_CK_ARGS"; export STUB_ARGS; hash_file "$@" ); }
+
+check_output "hash_file falls back to shasum when sha256sum is absent" "^5ee5um$" \
+    _hash_stubbed sha256 "$_CK_FILE"
+check_output "shasum fallback requests the right algorithm" "^-a 256 " \
+    cat "$_CK_ARGS"
+
+: > "$_CK_ARGS"
+check_output "hash_file falls back to shasum for sha512" "^5ee5um$" \
+    _hash_stubbed sha512 "$_CK_FILE"
+check_output "shasum fallback maps sha512 to -a 512" "^-a 512 " \
+    cat "$_CK_ARGS"
+
+: > "$_CK_ARGS"
+check_output "hash_file falls back to md5 when md5sum is absent" "^5ee5md5$" \
+    _hash_stubbed md5 "$_CK_FILE"
+check_output "md5 fallback uses -q for a bare digest" "^-q " \
+    cat "$_CK_ARGS"
+
+# nothing usable on PATH: must fail loudly, never silently produce no digest
+rm "${_CK_STUB}/shasum" "${_CK_STUB}/md5"
+check_output "hash_file without sha256sum or shasum reports the missing tool" "cannot verify the sha256 checksum" \
+    _hash_stubbed sha256 "$_CK_FILE"
+check_fails "hash_file without any sha tool exits non-zero" \
+    _hash_stubbed sha256 "$_CK_FILE"
+check_output "hash_file without md5sum or md5 reports the missing tool" "cannot verify the md5 checksum" \
+    _hash_stubbed md5 "$_CK_FILE"
+# hash_file die()s here; the explicit subshell keeps that exit from escaping
+# check_output's command substitution and taking the whole harness down
+_hash() { ( hash_file "$@" ); }
+check_output "hash_file rejects an unknown algorithm" "unsupported checksum algorithm" \
+    _hash sha1 "$_CK_FILE"
+check_fails "hash_file exits non-zero on an unknown algorithm" \
+    _hash sha1 "$_CK_FILE"
+
+# ── link collisions ───────────────────────────────────────────────────────────
+
+section "link collisions"
+
+mktempd _LC_ROOT
+_LC_BIN_FILE="${_LC_ROOT}/mytool"
+printf '#!/bin/sh\n' > "$_LC_BIN_FILE"
+chmod +x "$_LC_BIN_FILE"
+
+# do_link into a fresh BIN_DIR where the link name is already taken by the
+# given kind of entry. The dir is carved out of _LC_ROOT rather than mktempd'd
+# so it is still cleaned up when a caller runs this in a subshell.
+_link_over() {
+    local kind="$1" plugin="${2:-}"
+    _LC_DIR=$(mktemp -d "${_LC_ROOT}/bin.XXXXXX")
+    case "$kind" in
+        file)     printf 'installed by a package manager\n' > "${_LC_DIR}/mytool" ;;
+        symlink)  ln -s /dev/null "${_LC_DIR}/mytool" ;;
+        dirlink)  mkdir -p "${_LC_DIR}/real"; ln -s "${_LC_DIR}/real" "${_LC_DIR}/mytool" ;;
+        plugin)   printf 'installed by a package manager\n' > "${_LC_DIR}/kubectl-oidc_login" ;;
+        none)     ;;
+    esac
+    BIN_DIR="$_LC_DIR" KUBECTL_PLUGIN="$plugin" do_link "$_LC_BIN_FILE" mytool
+}
+
+# succeeds when do_link's stderr matches PATTERN
+_link_says() { local kind="$1" pat="$2"; _link_over "$kind" 2>&1 >/dev/null | grep -q "$pat"; }
+
+# NOTE: the _link_over setup calls are `|| true` on purpose. set -e is disabled
+# inside check(), so a do_link whose `ln` failed still returns 0 and the call
+# alone proves nothing — every guarantee below is asserted on the result.
+
+# the #20 regression: a plain file made ln -s fail with "File exists"
+_link_over file &>/dev/null || true
+check "a regular file at the link name is replaced by a symlink" \
+    test -L "${_LC_DIR}/mytool"
+check "the replacement symlink points at the new binary" \
+    test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
+check_fails "replacing a regular file raises no 'File exists' error" \
+    _link_says file "File exists"
+check_output "replacing a regular file is announced" "warning: replacing existing file" \
+    _link_over file
+
+# a symlink-to-directory must be replaced, not followed into (this is what -n buys)
+_link_over dirlink &>/dev/null || true
+check "a symlink to a directory is replaced, not linked into" \
+    test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
+check_fails "no link is created inside the target directory" \
+    test -e "${_LC_DIR}/real/mytool"
+
+# unchanged behaviour for the ordinary cases
+_link_over symlink &>/dev/null || true
+check "an existing plain symlink is still overwritten" \
+    test "$(readlink "${_LC_DIR}/mytool")" = "$_LC_BIN_FILE"
+check "overwriting a plain symlink prints no warning" \
+    test -z "$(_link_over symlink 2>&1 >/dev/null)"
+
+_link_over none &>/dev/null || true
+check "a symlink is created when nothing is in the way" \
+    test -L "${_LC_DIR}/mytool"
+
+# the kubectl plugin link goes through the same collision handling
+_link_over plugin oidc_login &>/dev/null || true
+check "kubectl plugin link survives a regular-file collision" \
+    test -L "${_LC_DIR}/kubectl-oidc_login"
+check "kubectl plugin link points at the binary" \
+    test "$(readlink "${_LC_DIR}/kubectl-oidc_login")" = "$_LC_BIN_FILE"
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
