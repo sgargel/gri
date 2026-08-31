@@ -702,10 +702,13 @@ for arg in "$@"; do
 done
 set -- "${args[@]+"${args[@]}"}"
 
+# --user only redirects the paths. Creating BIN_DIR here would fire for every
+# command, including read-only ones (list, versions, help) and --dry-run, which
+# promises to touch nothing. do_link creates it via `run mkdir -p` at the point
+# something is actually linked.
 if (( USER_MODE )); then
     OPT_DIR="${GRI_OPT_DIR:-${HOME}/.local/opt}"
     BIN_DIR="${GRI_BIN_DIR:-${HOME}/.local/bin}"
-    mkdir -p "$BIN_DIR"
 fi
 
 case "${1:-help}" in
