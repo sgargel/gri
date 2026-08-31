@@ -65,7 +65,8 @@ trap cleanup_tmpdirs EXIT
 # mktemp -d into the named variable, registered for removal at exit.
 # takes the variable name rather than printing the path: command substitution
 # runs in a subshell, so a printed path could not append to CLEANUP_PATHS.
-# usage: mktempd VARNAME
+# usage: mktempd VARNAME  (VARNAME upper-case, as shellcheck's SC2154 does not
+# see through the indirect assignment for lower-case names)
 mktempd() {
     local d
     d=$(mktemp -d)
@@ -356,27 +357,24 @@ _ai_no_linux='[{"name":"tool-x86_64.AppImage","browser_download_url":"http://x/a
 check_output "pick_asset: AppImage without 'linux' in name selected on linux" "\.AppImage" \
     pick_asset "$_ai_no_linux" linux amd64
 
-_ai_find_tmp=$(mktemp -d)
-echo "fake" > "$_ai_find_tmp/mytool-v1.0.0-x86_64.AppImage"
-chmod +x "$_ai_find_tmp/mytool-v1.0.0-x86_64.AppImage"
-trap 'rm -rf "$_ai_find_tmp"' EXIT
+mktempd _AI_FIND_TMP
+echo "fake" > "$_AI_FIND_TMP/mytool-v1.0.0-x86_64.AppImage"
+chmod +x "$_AI_FIND_TMP/mytool-v1.0.0-x86_64.AppImage"
 check_output "find_binary: finds .AppImage file" "\.AppImage$" \
-    find_binary "$_ai_find_tmp" mytool
+    find_binary "$_AI_FIND_TMP" mytool
 
-_ai_find_tmp2=$(mktemp -d)
-echo "fake" > "$_ai_find_tmp2/mytool.appimage"
-chmod +x "$_ai_find_tmp2/mytool.appimage"
-trap 'rm -rf "$_ai_find_tmp2"' EXIT
+mktempd _AI_FIND_TMP2
+echo "fake" > "$_AI_FIND_TMP2/mytool.appimage"
+chmod +x "$_AI_FIND_TMP2/mytool.appimage"
 check_output "find_binary: finds .appimage (lowercase)" "\.appimage$" \
-    find_binary "$_ai_find_tmp2" mytool
+    find_binary "$_AI_FIND_TMP2" mytool
 
 # ── 9. stale directory prevention ──────────────────────────────────────────────
 
 section "stale directory prevention"
 
-_sd_parent=$(mktemp -d)
-_sd_imaginary="${_sd_parent}/deep/nested/install"
-trap 'rm -rf "$_sd_parent"' EXIT
+mktempd _SD_PARENT
+_sd_imaginary="${_SD_PARENT}/deep/nested/install"
 
 bash -c "
     source '$GRI'
@@ -421,9 +419,8 @@ fi
 
 section "amule smoke test (network)"
 
-_AMULE_OPT=$(mktemp -d)
-_AMULE_BIN=$(mktemp -d)
-trap 'rm -rf "$_AMULE_OPT" "$_AMULE_BIN"' EXIT
+mktempd _AMULE_OPT
+mktempd _AMULE_BIN
 
 # Scenario 1: install without checksums must fail and leave NO stale directory.
 _amule_fail_out=""
