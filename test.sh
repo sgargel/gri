@@ -374,6 +374,92 @@ check_output "dry-run reports the collision instead of promising a link" "alread
 check_output "--allow-overwrite gets the dry-run preview through" "would link" \
     env GRI_OPT_DIR="$_LC_E2E_OPT" GRI_BIN_DIR="$_LC_E2E_BIN" "$GRI" --dry-run --allow-overwrite install junegunn/fzf
 
+# ── gz assets ─────────────────────────────────────────────────────────────────
+
+section "gz assets"
+
+check_output "score_asset: standalone .gz scores as an installable binary" "^15$" \
+    score_asset "tool_linux_amd64.gz" linux amd64
+
+_gz_assets='[{"name":"tool_linux_amd64.gz","browser_download_url":"http://x/g"},{"name":"tool_windows_amd64.gz","browser_download_url":"http://x/w"}]'
+check_output "pick_asset: selects the standalone .gz for the host" "tool_linux_amd64\.gz" \
+    pick_asset "$_gz_assets" linux amd64
+
+mktempd _GZ_ROOT
+
+# place_asset may die(); the subshell keeps that from ending the harness
+_place() { ( place_asset "$@" ); }
+
+# lay out a tmp_dir holding ASSET, and a fresh empty install dir
+_gz_case() {
+    _GZ_TMP=$(mktemp -d "${_GZ_ROOT}/tmp.XXXXXX")
+    _GZ_INST="${_GZ_TMP}/install"
+}
+
+# a standalone .gz is decompressed, not copied verbatim
+_gz_case
+printf '#!/bin/sh\necho gz-payload\n' > "${_GZ_TMP}/src"
+gzip -c "${_GZ_TMP}/src" > "${_GZ_TMP}/tool_linux_amd64.gz"
+_place tool_linux_amd64.gz mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
+check "the .gz is decompressed to the tool name" \
+    test -f "${_GZ_INST}/mytool"
+check "the installed file is the decompressed payload, not the gzip stream" \
+    grep -q "gz-payload" "${_GZ_INST}/mytool"
+check "the decompressed binary is executable" \
+    test -x "${_GZ_INST}/mytool"
+check_fails "the compressed asset is not left in the install dir" \
+    test -e "${_GZ_INST}/tool_linux_amd64.gz"
+
+# the output name comes from $name, never from the FNAME field in the gzip
+# header — that field is attacker-controlled release metadata
+_gz_case
+printf 'payload\n' > "${_GZ_TMP}/evil-header-name"
+gzip -c "${_GZ_TMP}/evil-header-name" > "${_GZ_TMP}/tool_linux_amd64.gz"
+_place tool_linux_amd64.gz mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
+check_fails "the gzip header's stored filename is not used as the output name" \
+    test -e "${_GZ_INST}/evil-header-name"
+check "the output is named after the tool instead" \
+    test -f "${_GZ_INST}/mytool"
+
+# a corrupt asset must fail loudly and leave nothing behind
+_gz_case
+printf 'not a gzip stream at all\n' > "${_GZ_TMP}/tool_linux_amd64.gz"
+check_fails "a corrupt .gz fails the install" \
+    _place tool_linux_amd64.gz mytool "$_GZ_INST" "$_GZ_TMP"
+check_output "the failure names the asset" "failed to decompress" \
+    _place tool_linux_amd64.gz mytool "$_GZ_INST" "$_GZ_TMP"
+check_fails "a corrupt .gz leaves no install dir behind" \
+    test -d "$_GZ_INST"
+
+# trailing garbage is a malformed asset: gzip exits 2, so it is refused
+_gz_case
+printf 'payload\n' | gzip -c > "${_GZ_TMP}/tool_linux_amd64.gz"
+printf 'JUNK' >> "${_GZ_TMP}/tool_linux_amd64.gz"
+check_fails "a .gz with trailing garbage is refused" \
+    _place tool_linux_amd64.gz mytool "$_GZ_INST" "$_GZ_TMP"
+
+# ordering: .tar.gz must still reach the tar handler, not the new .gz arm
+_gz_case
+mkdir -p "${_GZ_TMP}/src.d"
+printf '#!/bin/sh\necho from-tar\n' > "${_GZ_TMP}/src.d/mytool"
+tar -czf "${_GZ_TMP}/tool_linux_amd64.tar.gz" -C "${_GZ_TMP}/src.d" mytool
+_place tool_linux_amd64.tar.gz mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
+check "a .tar.gz is still extracted as a tarball" \
+    grep -q "from-tar" "${_GZ_INST}/mytool"
+
+# unchanged: the other formats still route where they did
+_gz_case
+printf 'appimage-bytes\n' > "${_GZ_TMP}/tool-x86_64.AppImage"
+_place tool-x86_64.AppImage mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
+check "an AppImage keeps its extension" \
+    test -x "${_GZ_INST}/tool-x86_64.AppImage"
+
+_gz_case
+printf 'raw-bytes\n' > "${_GZ_TMP}/tool_linux_amd64"
+_place tool_linux_amd64 mytool "$_GZ_INST" "$_GZ_TMP" &>/dev/null || true
+check "a raw binary is copied under the tool name" \
+    test -x "${_GZ_INST}/mytool"
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"

@@ -418,6 +418,51 @@ do_link() {
 
 # ── commands ──────────────────────────────────────────────────────────────────
 
+# place_asset ASSET_NAME NAME INSTALL_DIR TMP_DIR — unpack or copy the
+# downloaded asset into INSTALL_DIR, dispatching on the asset's extension.
+# Kept out of cmd_install so the format handling is reachable from tests
+# without a network round-trip.
+place_asset() {
+    local asset_name="$1" name="$2" install_dir="$3" tmp_dir="$4"
+
+    case "${asset_name,,}" in
+        *.tar.gz|*.tgz)  extract_and_validate "${tmp_dir}/${asset_name}" tgz     "$install_dir" "$tmp_dir" ;;
+        *.tar.bz2)       extract_and_validate "${tmp_dir}/${asset_name}" tar.bz2  "$install_dir" "$tmp_dir" ;;
+        *.tar.xz)        extract_and_validate "${tmp_dir}/${asset_name}" tar.xz   "$install_dir" "$tmp_dir" ;;
+        *.zip)           extract_and_validate "${tmp_dir}/${asset_name}" zip      "$install_dir" "$tmp_dir" ;;
+        # standalone compressed binary (tool_linux_amd64.gz) — NOT an archive.
+        # Must stay below the *.tar.gz arm above, which would otherwise fall
+        # through to here and land a tar file in place of the binary.
+        #
+        # -dc writes to a path we build from $name (validated at --as parse
+        # time). Never `gzip -d`, which names the output after the file, and
+        # never -N, which names it after the FNAME field inside the gzip
+        # header — that field is attacker-controlled release metadata.
+        # A gzip stream carries no entry paths, symlinks or modes, so there is
+        # nothing here for extract_and_validate to check.
+        *.gz)
+            need gzip
+            # decompress into tmp first: a corrupt asset must not leave a
+            # half-made install dir behind
+            gzip -dc "${tmp_dir}/${asset_name}" > "${tmp_dir}/${name}" \
+                || die "failed to decompress ${asset_name} — corrupt or not a gzip stream"
+            mkdir -p "$install_dir"
+            cp "${tmp_dir}/${name}" "${install_dir}/${name}"
+            chmod +x "${install_dir}/${name}"
+            ;;
+        *.appimage)
+            mkdir -p "$install_dir"
+            cp "${tmp_dir}/${asset_name}" "${install_dir}/${asset_name}"
+            chmod +x "${install_dir}/${asset_name}"
+            ;;
+        *)
+            mkdir -p "$install_dir"
+            cp "${tmp_dir}/${asset_name}" "${install_dir}/${name}"
+            chmod +x "${install_dir}/${name}"
+            ;;
+    esac
+}
+
 cmd_install() {
     need curl jq
     local owner_repo="${1:?usage: gri install <owner/repo> [version]}"
@@ -509,22 +554,7 @@ cmd_install() {
         fi
     fi
 
-    case "${asset_name,,}" in
-        *.tar.gz|*.tgz)  extract_and_validate "${tmp_dir}/${asset_name}" tgz     "$install_dir" "$tmp_dir" ;;
-        *.tar.bz2)       extract_and_validate "${tmp_dir}/${asset_name}" tar.bz2  "$install_dir" "$tmp_dir" ;;
-        *.tar.xz)        extract_and_validate "${tmp_dir}/${asset_name}" tar.xz   "$install_dir" "$tmp_dir" ;;
-        *.zip)           extract_and_validate "${tmp_dir}/${asset_name}" zip      "$install_dir" "$tmp_dir" ;;
-        *.appimage)
-            mkdir -p "$install_dir"
-            cp "${tmp_dir}/${asset_name}" "${install_dir}/${asset_name}"
-            chmod +x "${install_dir}/${asset_name}"
-            ;;
-        *)
-            mkdir -p "$install_dir"
-            cp "${tmp_dir}/${asset_name}" "${install_dir}/${name}"
-            chmod +x "${install_dir}/${name}"
-            ;;
-    esac
+    place_asset "$asset_name" "$name" "$install_dir" "$tmp_dir"
 
     echo "installed to ${install_dir}"
 

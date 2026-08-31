@@ -39,7 +39,7 @@ gri list gri
 
 ## Requirements
 
-`curl`, `jq`, `tar`, `unzip` (for `.zip` releases), plus a hashing tool for checksum verification: `sha256sum` / `sha512sum` / `md5sum`, or the `shasum` / `md5` equivalents that macOS ships instead. All are pre-installed on most Linux distros except `unzip`.
+`curl`, `jq`, `tar`, `unzip` (for `.zip` releases), `gzip` (for standalone `.gz` binaries), plus a hashing tool for checksum verification: `sha256sum` / `sha512sum` / `md5sum`, or the `shasum` / `md5` equivalents that macOS ships instead. All are pre-installed on most Linux distros except `unzip`.
 
 ## Install
 
