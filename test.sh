@@ -506,6 +506,66 @@ chmod +x "${_UM_LINK_ROOT}/mytool"
 check "do_link still creates a missing BIN_DIR when it links" \
     test -L "${_UM_BIN}/mytool"
 
+# ── versions auth ─────────────────────────────────────────────────────────────
+
+section "versions auth"
+
+# gri calls curl unqualified, so a shell function shadows it — no PATH games,
+# and `need curl` still passes because command -v finds a function.
+# Each wrapper runs in a subshell: cmd_versions may die(), and that exit must
+# not take the harness down.
+mktempd _CV_DIR
+_CV_LOG="${_CV_DIR}/curl-args"
+
+_versions() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; echo '[{"tag_name":"v1.2.0"},{"tag_name":"v1.1.0"}]'; }
+      CURL_AUTH=(-H "Authorization: Bearer test-token")
+      cmd_versions "$@" )
+}
+_versions_noauth() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; echo '[{"tag_name":"v1.2.0"}]'; }
+      CURL_AUTH=()
+      cmd_versions "$@" )
+}
+_versions_failing() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; return 22; }
+      CURL_AUTH=(-H "Authorization: Bearer test-token")
+      cmd_versions "$@" )
+}
+# the results header must not be printed when the fetch failed.
+# Capture stdout rather than piping into grep: pipefail would hand back
+# cmd_versions' own non-zero exit and mask whatever grep decided.
+_failing_prints_header() {
+    local out
+    out=$(_versions_failing owner/repo 2>/dev/null) || true
+    grep -q "latest releases for" <<< "$out"
+}
+
+: > "$_CV_LOG"
+_versions owner/repo &>/dev/null || true
+check_output "cmd_versions sends the Authorization header" "Authorization: Bearer test-token" \
+    cat "$_CV_LOG"
+check_output "cmd_versions requests the releases endpoint" "repos/owner/repo/releases" \
+    cat "$_CV_LOG"
+check_output "cmd_versions lists the tags it got back" "v1\.2\.0" \
+    _versions owner/repo
+
+# an empty CURL_AUTH must expand to nothing, not to an empty argument
+: > "$_CV_LOG"
+_versions_noauth owner/repo &>/dev/null || true
+check_fails "no Authorization header is sent when GITHUB_TOKEN is unset" \
+    grep -q "Authorization" "$_CV_LOG"
+check_output "the unauthenticated call still reaches the endpoint" "repos/owner/repo/releases" \
+    cat "$_CV_LOG"
+
+# a failed fetch used to exit 22 silently, after printing the results header
+check_fails "a failed fetch exits non-zero" \
+    _versions_failing owner/repo
+check_output "a failed fetch says why" "could not fetch releases for owner/repo" \
+    _versions_failing owner/repo
+check_fails "a failed fetch does not print the results header" \
+    _failing_prints_header
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"

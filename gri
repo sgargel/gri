@@ -621,9 +621,15 @@ cmd_versions() {
     local owner_repo="${1:?usage: gri versions <owner/repo>}"
     [[ "$owner_repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
         || die "invalid repo format '${owner_repo}' — expected owner/repo"
+    # CURL_AUTH matters twice over: private repos 404 without it, and public
+    # ones burn the 60/hour unauthenticated limit. Fetch before printing the
+    # header, so a failure is not preceded by a promise of results.
+    local releases
+    releases=$(curl -sf "${CURL_AUTH[@]}" "${GITHUB_API}/repos/${owner_repo}/releases") \
+        || die "could not fetch releases for ${owner_repo}"
+
     echo "latest releases for ${owner_repo}:"
-    curl -sf "${GITHUB_API}/repos/${owner_repo}/releases" \
-        | jq -r '.[].tag_name' | head -20
+    jq -r '.[].tag_name' <<< "$releases" | head -20
 }
 
 cmd_remove() {
