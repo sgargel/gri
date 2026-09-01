@@ -389,7 +389,11 @@ find_binary() {
     files=$(find "$dir" -maxdepth 2 -type f \
         ! -name "*.txt" ! -name "*.md" ! -name "LICENSE*" ! -name "README*" \
         2>/dev/null)
-    if [[ "$(wc -l <<< "$files")" -eq 1 ]]; then
+    # the -n guard is load-bearing: a here-string appends a newline, so
+    # `wc -l <<< ""` counts 1 and an empty find result looked like a sole hit.
+    # find_binary then returned 0 with an empty path, and every caller's
+    # "could not auto-detect binary" guidance became unreachable.
+    if [[ -n "$files" && "$(wc -l <<< "$files")" -eq 1 ]]; then
         echo "$files" && return
     fi
 

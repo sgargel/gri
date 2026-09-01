@@ -646,6 +646,63 @@ check "a sha512 checksum file verifies the asset" \
 check_fails "the same file rejected under the wrong algorithm" \
     verify_checksum "${_CA_DIR}/tool_linux_amd64.tar.gz" sha256 "${_CA_DIR}/checksums" tool_linux_amd64.tar.gz
 
+# ── find_binary on empty results ──────────────────────────────────────────────
+
+section "find_binary empty results"
+
+mktempd _FB_ROOT
+_fb_dir() { _FB_DIR=$(mktemp -d "${_FB_ROOT}/d.XXXXXX"); }
+
+# `wc -l <<< ""` counts 1, so an empty find result looked like a sole hit and
+# find_binary returned 0 with an empty path
+_fb_dir
+check_fails "an empty directory yields no binary" \
+    find_binary "$_FB_DIR" mytool
+check_output "an empty directory prints nothing" "^$" \
+    find_binary "$_FB_DIR" mytool
+
+# same shape: everything present is excluded by the step-7 filters
+_fb_dir
+printf 'docs\n' > "${_FB_DIR}/README.md"
+printf 'docs\n' > "${_FB_DIR}/NOTES.txt"
+printf 'mit\n'  > "${_FB_DIR}/LICENSE"
+check_fails "a directory holding only docs yields no binary" \
+    find_binary "$_FB_DIR" mytool
+
+# step 7 itself must still work: one real file, name not matching the tool
+_fb_dir
+printf '#!/bin/sh\n' > "${_FB_DIR}/renamed-tool"
+check_output "a sole unrecognised file is still returned" "renamed-tool$" \
+    find_binary "$_FB_DIR" mytool
+
+# and still work when docs sit alongside it
+_fb_dir
+printf '#!/bin/sh\n' > "${_FB_DIR}/renamed-tool"
+printf 'docs\n' > "${_FB_DIR}/README.md"
+check_output "docs alongside a sole file do not hide it" "renamed-tool$" \
+    find_binary "$_FB_DIR" mytool
+
+# two candidates is ambiguous, not a pick
+_fb_dir
+printf 'a\n' > "${_FB_DIR}/one"
+printf 'b\n' > "${_FB_DIR}/two"
+check_fails "two unrecognised files stay ambiguous" \
+    find_binary "$_FB_DIR" mytool
+
+# the callers' guidance was unreachable: find_binary succeeded, so cmd_switch
+# went straight to do_link and died on `ln -s ""` instead of saying what to do
+mktempd _FB_OPT
+mkdir -p "${_FB_OPT}/mytool/v1.0.0"
+printf 'docs\n' > "${_FB_OPT}/mytool/v1.0.0/README.md"
+_switch_empty() { ( OPT_DIR="$_FB_OPT" BIN_DIR="${_FB_OPT}/bin" cmd_switch mytool v1.0.0 ); }
+
+check_fails "switching to a version with no binary fails" \
+    _switch_empty
+check_output "the failure is gri's guidance, not an ln error" "no executable found in" \
+    _switch_empty
+check_output "the guidance names the manual link command" "gri link mytool v1\.0\.0" \
+    _switch_empty
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
