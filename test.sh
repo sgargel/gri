@@ -566,6 +566,32 @@ check_output "a failed fetch says why" "could not fetch releases for owner/repo"
 check_fails "a failed fetch does not print the results header" \
     _failing_prints_header
 
+# ── download failures ─────────────────────────────────────────────────────────
+
+section "download failures"
+
+# curl without -f writes the HTTP error body to the output file and exits 0,
+# so a 404 becomes a 9-byte "Not Found" binary. Verified against a real
+# GitHub 404 rather than a stub, because the flag behaviour is the bug.
+mktempd _DL_DIR
+_DL_404="https://github.com/sgargel/gri/releases/download/v0.0.0-does-not-exist/nothing"
+
+# download may die(); the subshell keeps that from ending the harness
+_dl() { ( download "$@" ); }
+
+check_fails "download fails on an HTTP error" \
+    _dl "$_DL_404" "${_DL_DIR}/out.bin"
+check_output "the failure names the url" "download failed:" \
+    _dl "$_DL_404" "${_DL_DIR}/out.bin"
+check_fails "the error body is not left in the output file" \
+    grep -q "Not Found" "${_DL_DIR}/out.bin"
+
+# the success path still works and writes real content
+check "download fetches a real asset" \
+    _dl "https://raw.githubusercontent.com/sgargel/gri/main/LICENSE" "${_DL_DIR}/ok.txt"
+check "the fetched file has the expected content" \
+    grep -q "MIT License" "${_DL_DIR}/ok.txt"
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
