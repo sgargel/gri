@@ -182,17 +182,22 @@ find_checksum_asset() {
             "${an}.sha256"|"${an}.sha2")  result_algo="sha256"; result_url="$url"; break ;;
             "${an}.sha512")               result_algo="sha512"; result_url="$url"; break ;;
             "${an}.md5")                  result_algo="md5";    result_url="$url"; break ;;
-            # aggregate: exact well-known names — stop immediately
-            "checksums.txt"|"checksums.sha256"|"checksums.sha512" \
+            # aggregate: exact well-known names — stop immediately.
+            # sha512 first: checksums.sha512 sat in the sha256 arm below, so a
+            # sha512 digest was compared against a sha256 one and every install
+            # of such a release died on a checksum mismatch.
+            "checksums.sha512"|"sha512sums"|"sha512sums.txt")
+                result_algo="sha512"; result_url="$url"; break ;;
+            "checksums.txt"|"checksums.sha256" \
             |"sha256sums"|"sha256sums.txt")
                 result_algo="sha256"; result_url="$url"; break ;;
-            "sha512sums"|"sha512sums.txt")
-                result_algo="sha512"; result_url="$url"; break ;;
-            # wildcard fallbacks — keep iterating in case an exact match comes later
+            # wildcard fallbacks — keep iterating in case an exact match comes
+            # later. Same ordering trap as above: *checksums* would otherwise
+            # claim names like release-checksums.sha512 for sha256.
+            *sha512sum*|*.sha512)
+                [[ -z "$fallback_url" ]] && fallback_algo="sha512" && fallback_url="$url" ;;
             *checksums*|*sha256sum*)
                 [[ -z "$fallback_url" ]] && fallback_algo="sha256" && fallback_url="$url" ;;
-            *sha512sum*)
-                [[ -z "$fallback_url" ]] && fallback_algo="sha512" && fallback_url="$url" ;;
         esac
     done < <(echo "$assets_json" | jq -r '.[] | [.name, .browser_download_url] | @tsv')
 

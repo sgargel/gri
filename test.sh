@@ -592,6 +592,60 @@ check "download fetches a real asset" \
 check "the fetched file has the expected content" \
     grep -q "MIT License" "${_DL_DIR}/ok.txt"
 
+# ── checksum algorithm selection ──────────────────────────────────────────────
+
+section "checksum algorithm selection"
+
+# find_checksum_asset prints "<algo>\t<url>"; only the algo matters here
+_algo_for() {
+    local json="[" sep=""
+    local n
+    for n in "$@"; do
+        json+="${sep}{\"name\":\"${n}\",\"browser_download_url\":\"http://x/${n}\"}"
+        sep=","
+    done
+    json+="]"
+    find_checksum_asset "$json" "tool_linux_amd64.tar.gz" | cut -f1
+}
+
+# the reported bug: a sha512 aggregate was announced as sha256, so the sha256
+# digest of the asset was compared against a sha512 one and never matched
+check_output "checksums.sha512 selects sha512" "^sha512$" \
+    _algo_for checksums.sha512
+check_output "checksums.sha256 still selects sha256" "^sha256$" \
+    _algo_for checksums.sha256
+check_output "checksums.txt still selects sha256" "^sha256$" \
+    _algo_for checksums.txt
+check_output "sha512sums.txt still selects sha512" "^sha512$" \
+    _algo_for sha512sums.txt
+check_output "sha256sums still selects sha256" "^sha256$" \
+    _algo_for sha256sums
+
+# the same ordering trap in the wildcard arms: *checksums* used to swallow
+# any sha512 name that was not an exact match
+check_output "release-checksums.sha512 selects sha512" "^sha512$" \
+    _algo_for release-checksums.sha512
+check_output "a prefixed sha512sums file selects sha512" "^sha512$" \
+    _algo_for tool-sha512sums.txt
+check_output "an unrecognised checksums name still defaults to sha256" "^sha256$" \
+    _algo_for release-checksums.txt
+
+# per-asset sidecars are unaffected
+check_output "a .sha512 sidecar selects sha512" "^sha512$" \
+    _algo_for tool_linux_amd64.tar.gz.sha512
+check_output "a .sha256 sidecar selects sha256" "^sha256$" \
+    _algo_for tool_linux_amd64.tar.gz.sha256
+
+# end to end: a sha512 aggregate now verifies instead of dying on a mismatch
+mktempd _CA_DIR
+printf 'release payload\n' > "${_CA_DIR}/tool_linux_amd64.tar.gz"
+{ sha512sum "${_CA_DIR}/tool_linux_amd64.tar.gz" | awk '{print $1}' | tr -d '\n'
+  printf '  tool_linux_amd64.tar.gz\n'; } > "${_CA_DIR}/checksums"
+check "a sha512 checksum file verifies the asset" \
+    verify_checksum "${_CA_DIR}/tool_linux_amd64.tar.gz" sha512 "${_CA_DIR}/checksums" tool_linux_amd64.tar.gz
+check_fails "the same file rejected under the wrong algorithm" \
+    verify_checksum "${_CA_DIR}/tool_linux_amd64.tar.gz" sha256 "${_CA_DIR}/checksums" tool_linux_amd64.tar.gz
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
