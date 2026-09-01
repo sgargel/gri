@@ -80,6 +80,22 @@ fetch_release() {
     curl -sf "${CURL_AUTH[@]}" "$url" || die "could not fetch release for ${owner_repo}"
 }
 
+# download URL DEST [CURL_OPTS...] — fetch URL to DEST, loudly.
+#
+# -f is the point: without it curl writes the HTTP error body to DEST and exits
+# 0, so a 404 lands a 9-byte "Not Found" where the binary should be. That gets
+# caught by checksum verification only when the asset is actually listed in a
+# checksum file — with --allow-missing-checksum, or when verify_checksum skips
+# an unlisted asset, the error page is what gets chmod +x'd and symlinked.
+#
+# No CURL_AUTH here: these are browser_download_url hosts, not the API. Private
+# releases need the API asset endpoint instead, which is a separate change.
+download() {
+    local url="$1" dest="$2"
+    shift 2
+    curl -fL "$@" -o "$dest" "$url" || die "download failed: ${url}"
+}
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 score_asset() {
@@ -536,7 +552,7 @@ cmd_install() {
     tmp_dir=$(mktemp -d)
     trap cleanup EXIT
 
-    curl -L --progress-bar -o "${tmp_dir}/${asset_name}" "$asset_url"
+    download "$asset_url" "${tmp_dir}/${asset_name}" --progress-bar
 
     # checksum verification
     local ck_line ck_algo ck_url
@@ -544,7 +560,7 @@ cmd_install() {
         ck_algo=$(cut -f1 <<< "$ck_line")
         ck_url=$(cut -f2  <<< "$ck_line")
         echo "verifying checksum..."
-        curl -sfL -o "${tmp_dir}/checksums" "$ck_url"
+        download "$ck_url" "${tmp_dir}/checksums" -s
         verify_checksum "${tmp_dir}/${asset_name}" "$ck_algo" "${tmp_dir}/checksums" "$asset_name"
     else
         if (( ALLOW_MISSING_CHECKSUM )); then
@@ -621,9 +637,15 @@ cmd_versions() {
     local owner_repo="${1:?usage: gri versions <owner/repo>}"
     [[ "$owner_repo" =~ ^[A-Za-z0-9._-]+/[A-Za-z0-9._-]+$ ]] \
         || die "invalid repo format '${owner_repo}' — expected owner/repo"
+    # CURL_AUTH matters twice over: private repos 404 without it, and public
+    # ones burn the 60/hour unauthenticated limit. Fetch before printing the
+    # header, so a failure is not preceded by a promise of results.
+    local releases
+    releases=$(curl -sf "${CURL_AUTH[@]}" "${GITHUB_API}/repos/${owner_repo}/releases") \
+        || die "could not fetch releases for ${owner_repo}"
+
     echo "latest releases for ${owner_repo}:"
-    curl -sf "${GITHUB_API}/repos/${owner_repo}/releases" \
-        | jq -r '.[].tag_name' | head -20
+    jq -r '.[].tag_name' <<< "$releases" | head -20
 }
 
 cmd_remove() {

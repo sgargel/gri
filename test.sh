@@ -506,6 +506,92 @@ chmod +x "${_UM_LINK_ROOT}/mytool"
 check "do_link still creates a missing BIN_DIR when it links" \
     test -L "${_UM_BIN}/mytool"
 
+# ── versions auth ─────────────────────────────────────────────────────────────
+
+section "versions auth"
+
+# gri calls curl unqualified, so a shell function shadows it — no PATH games,
+# and `need curl` still passes because command -v finds a function.
+# Each wrapper runs in a subshell: cmd_versions may die(), and that exit must
+# not take the harness down.
+mktempd _CV_DIR
+_CV_LOG="${_CV_DIR}/curl-args"
+
+_versions() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; echo '[{"tag_name":"v1.2.0"},{"tag_name":"v1.1.0"}]'; }
+      CURL_AUTH=(-H "Authorization: Bearer test-token")
+      cmd_versions "$@" )
+}
+_versions_noauth() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; echo '[{"tag_name":"v1.2.0"}]'; }
+      CURL_AUTH=()
+      cmd_versions "$@" )
+}
+_versions_failing() {
+    ( curl() { echo "$@" >> "$_CV_LOG"; return 22; }
+      CURL_AUTH=(-H "Authorization: Bearer test-token")
+      cmd_versions "$@" )
+}
+# the results header must not be printed when the fetch failed.
+# Capture stdout rather than piping into grep: pipefail would hand back
+# cmd_versions' own non-zero exit and mask whatever grep decided.
+_failing_prints_header() {
+    local out
+    out=$(_versions_failing owner/repo 2>/dev/null) || true
+    grep -q "latest releases for" <<< "$out"
+}
+
+: > "$_CV_LOG"
+_versions owner/repo &>/dev/null || true
+check_output "cmd_versions sends the Authorization header" "Authorization: Bearer test-token" \
+    cat "$_CV_LOG"
+check_output "cmd_versions requests the releases endpoint" "repos/owner/repo/releases" \
+    cat "$_CV_LOG"
+check_output "cmd_versions lists the tags it got back" "v1\.2\.0" \
+    _versions owner/repo
+
+# an empty CURL_AUTH must expand to nothing, not to an empty argument
+: > "$_CV_LOG"
+_versions_noauth owner/repo &>/dev/null || true
+check_fails "no Authorization header is sent when GITHUB_TOKEN is unset" \
+    grep -q "Authorization" "$_CV_LOG"
+check_output "the unauthenticated call still reaches the endpoint" "repos/owner/repo/releases" \
+    cat "$_CV_LOG"
+
+# a failed fetch used to exit 22 silently, after printing the results header
+check_fails "a failed fetch exits non-zero" \
+    _versions_failing owner/repo
+check_output "a failed fetch says why" "could not fetch releases for owner/repo" \
+    _versions_failing owner/repo
+check_fails "a failed fetch does not print the results header" \
+    _failing_prints_header
+
+# ── download failures ─────────────────────────────────────────────────────────
+
+section "download failures"
+
+# curl without -f writes the HTTP error body to the output file and exits 0,
+# so a 404 becomes a 9-byte "Not Found" binary. Verified against a real
+# GitHub 404 rather than a stub, because the flag behaviour is the bug.
+mktempd _DL_DIR
+_DL_404="https://github.com/sgargel/gri/releases/download/v0.0.0-does-not-exist/nothing"
+
+# download may die(); the subshell keeps that from ending the harness
+_dl() { ( download "$@" ); }
+
+check_fails "download fails on an HTTP error" \
+    _dl "$_DL_404" "${_DL_DIR}/out.bin"
+check_output "the failure names the url" "download failed:" \
+    _dl "$_DL_404" "${_DL_DIR}/out.bin"
+check_fails "the error body is not left in the output file" \
+    grep -q "Not Found" "${_DL_DIR}/out.bin"
+
+# the success path still works and writes real content
+check "download fetches a real asset" \
+    _dl "https://raw.githubusercontent.com/sgargel/gri/main/LICENSE" "${_DL_DIR}/ok.txt"
+check "the fetched file has the expected content" \
+    grep -q "MIT License" "${_DL_DIR}/ok.txt"
+
 # ── asset selection ───────────────────────────────────────────────────────────
 
 section "asset selection"
